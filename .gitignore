@@ -1,0 +1,24 @@
+# Build output
+build/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+
+# Qt Creator
+*.pro.user
+CMakeUserPresets.json
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temp
+*.tmp
+*.swp
+*~
