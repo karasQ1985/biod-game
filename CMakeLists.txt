@@ -24,6 +24,7 @@ set(SOURCES
     src/simulation/SpatialHash.cpp
     src/simulation/PlantSpatialHash.cpp
     src/simulation/Simulation.cpp
+    src/simulation/SimulationConfig.cpp
     src/renderer/Renderer.cpp
     src/ui/GLWidget.cpp
     src/ui/MainWindow.cpp

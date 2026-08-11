@@ -4,14 +4,26 @@
 #include "PlantData.h"
 #include "SpatialHash.h"
 #include "PlantSpatialHash.h"
+
 #include <vector>
 #include <random>
 #include <string>
+
+// Kill pair for predation tracking (needs to persist between simulation sub-steps)
+struct KillPair { int predatorIdx; int preyIdx; };
 
 // Core simulation: Reynolds flocking (separation, alignment, cohesion)
 // with spatial hashing for O(n) neighbor search.
 // Supports dynamic flock count (2-12) with per-flock parameters and predator-prey relationships.
 // IMPORTANT: Zero per-frame heap allocation -- all working buffers are pre-allocated.
+
+// Boundary handling modes
+enum class BoundaryMode : int {
+    Torus    = 0,  // Wrap around: exit right -> enter left
+    SoftWall = 1,  // Soft repulsion near edges
+    HardWall = 2,  // Elastic bounce at edges
+    Hybrid   = 3,  // Soft repulsion + torus fallback (default)
+};
 
 // Relationship types between flocks
 enum class FlockRelation : int {
@@ -26,7 +38,7 @@ inline constexpr int MIN_FLOCKS = 2;
 
 // Global simulation settings (not per-flock)
 struct GlobalParams {
-    bool wrapBoundary = true;         // true = toroidal wrap, false = hard collision walls
+    BoundaryMode boundaryMode = BoundaryMode::Hybrid;
     bool hungerFlashEnabled = true;   // true = boids flash red when starving
 };
 
@@ -80,6 +92,14 @@ public:
     // Collect upright-sprite flags for all flocks (for renderer)
     std::vector<bool> flockUprightFlags() const;
 
+    // Collect age-stage size multipliers for all flocks (for renderer).
+    // Returns 4 floats per flock: {juvenileSize, youngSize, adultSize, elderSize}
+    std::vector<float> flockAgeSizes() const;
+
+    // Collect sex-based size multipliers for all flocks (for renderer).
+    // Returns 2 floats per flock: {maleSize, femaleSize}
+    std::vector<float> flockSexSizes() const;
+
     // Predator-prey relationship matrix
     // m_relationships[viewer][target] = how viewer flock relates to target flock
     FlockRelation relationship(int viewer, int target) const;
@@ -92,6 +112,13 @@ public:
     const PlantData& plants() const { return m_plants; }
     PlantParams& plantParams() { return m_plantParams; }
     const PlantParams& plantParams() const { return m_plantParams; }
+    NestParams& nestParams() { return m_nestParams; }
+    const NestParams& nestParams() const { return m_nestParams; }
+    NestData& nests() { return m_nests; }
+    const NestData& nests() const { return m_nests; }
+    const std::vector<float>& flockColorR() const { return m_flockColorR; }
+    const std::vector<float>& flockColorG() const { return m_flockColorG; }
+    const std::vector<float>& flockColorB() const { return m_flockColorB; }
     GlobalParams& globalParams() { return m_globalParams; }
     const GlobalParams& globalParams() const { return m_globalParams; }
 
@@ -111,6 +138,8 @@ private:
     FlockData m_data;
     PlantData m_plants;
     PlantParams m_plantParams;
+    NestData m_nests;
+    NestParams m_nestParams;
     GlobalParams m_globalParams;
     SpatialHash m_grid;
     PlantSpatialHash m_plantGrid;
@@ -145,6 +174,7 @@ private:
     bool m_hasTarget;
     float m_targetX;
     float m_targetY;
+    float m_targetTime = -1e9f;   // simTime when target was last set (for auto-clear)
 
     // Pre-allocated working buffers
     std::vector<float> m_forceX;
@@ -158,14 +188,35 @@ private:
     // Per-flock reproduction timing
     std::vector<float> m_lastReproductionTime;
 
+    // Kill tracking (persists between simulation sub-steps)
+    std::vector<KillPair> m_killsThisFrame;
+
     // RNG
     std::mt19937 m_rng;
     std::uniform_real_distribution<float> m_angleDist{-1.0f, 1.0f};
 
     void wrapPosition(float& x, float& y) const;
     void updatePlants(float dt);
+    void updateNests(float dt);
     void updateReproduction(float dt);
+
+    // Modular sub-steps of update() (P5: Simulation modularization)
+    void stepHunger(float dt);
+    void stepFlocks(float dt);
+    void stepIntegration(float dt);
+
+    // State machine: determine current state for each boid based on context
+    void determineStates();
+    // Age: update stage and apply age-based modifiers
+    void updateAgeStages();
+    // Hatred: accumulate on flock-mates after kills, decay over time
+    void updateHatred(float dt);
 
     // Helper: get per-boid rendering color based on flock + sex
     void resolveBoidColor(int fid, int sex, float& r, float& g, float& b) const;
+
+public:
+    // Config save/load (JSON format, .biodcfg extension)
+    bool saveConfig(const char* path) const;
+    bool loadConfig(const char* path);
 };

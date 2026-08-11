@@ -33,7 +33,6 @@ private slots:
     void onChangeFemaleColor(int id);
     void onToggleSexColors(bool checked);
     void onToggleInvertHunger(bool checked);
-    void onToggleWrapBoundary(bool checked);
     void onToggleHungerFlash(bool checked);
     void onGlobalFlockCapChanged(int value);
     void onSpriteChanged(int index);
@@ -41,11 +40,12 @@ private slots:
     void onRefreshSprites();
     void onSpriteScaleChanged(int value);
     void onToggleUpright(bool checked);
+    void onSaveConfig();
+    void onLoadConfig();
 
 private:
     void setupUI();
     void setupToolbar();
-    void setupGlobalDock();
     void setupStatsDock();
     void refreshStatsPanel();
     void updateFlockCombo();
@@ -93,8 +93,10 @@ private:
     QCheckBox* m_uprightCheck = nullptr;
 
     // Global settings (independent dock, non-registry)
-    QCheckBox* m_wrapBoundaryCheck = nullptr;
+    QComboBox* m_boundaryCombo = nullptr;
     QCheckBox* m_globalHungerFlashCheck = nullptr;
+    QSlider* m_globalCapSlider = nullptr;
+    QLabel* m_globalCapValueLabel = nullptr;
     QSlider*   m_globalFlockCapSlider = nullptr;
     QLabel*    m_globalFlockCapLabel = nullptr;
     QSlider*   m_spriteScaleSlider = nullptr;

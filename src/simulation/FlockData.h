@@ -1,109 +1,224 @@
 #pragma once
 
+#include "NestData.h"
 #include <vector>
 #include <string>
 #include <cstddef>
 #include <cstdint>
 
-// SoA (Structure of Arrays) layout for cache-friendly memory access.
-// All per-boid attributes are stored as separate contiguous arrays.
-// IMPORTANT: No per-frame heap allocation; all vectors are pre-allocated via reserve().
+// Priority-ordered state machine for individual boids.
+// Lower numeric value = higher priority (survival first).
+enum class BoidState : uint8_t {
+    IDLE     = 0,
+    FLEEING  = 1,
+    HUNTING  = 2,
+    FORAGING = 3,
+    // Reserved for future expansion:
+    // RESTING, MATING, FIGHTING, DEFENDING, NURSING
+};
 
-struct FlockParams {
-    // Reynolds rules (weights multiply normalized maxSpeed forces)
+// Age stages for individual boids.
+// Lifecycle: Juvenile -> Young -> Adult -> Elder -> Death
+enum class AgeStage : uint8_t {
+    Juvenile = 0,  // Not yet reproductive, slower, smaller
+    Young    = 1,  // Reproductive, growing toward peak
+    Adult    = 2,  // Peak performance
+    Elder    = 3,  // Declining, near death
+};
+
+// ============================================================================
+// FlockParams sub-structs -- hierarchically split by functional domain.
+// Each sub-struct is standard-layout to support ParamRegistry offsetof().
+// Sub-struct naming: Suf struct starts with capital letter (e.g. MovementSuf).
+// ============================================================================
+
+struct MovementSuf {
+    float maxSpeed = 300.0f;
+    float maxForce = 3000.0f;
+    float boidSize = 6.0f;
+    float hardCollisionRadius = 14.0f;
+    float weightSpeedPenalty = 0.3f;
+};
+
+struct PerceptionSuf {
     float separationRadius = 30.0f;
     float alignmentRadius = 60.0f;
     float cohesionRadius = 60.0f;
     float separationWeight = 2.5f;
     float alignmentWeight = 0.8f;
     float cohesionWeight = 0.5f;
+};
 
-    // Boundary avoidance: soft repulsion from world edges
+struct BoundarySuf {
     float boundaryWeight = 2.0f;
     float boundaryMargin = 80.0f;
-
-    // Random wander: organic noise for natural behavior
     float wanderWeight = 0.3f;
+    float targetWeight = 1.5f;
+};
 
-    // Target seeking
-    float targetWeight = 3.0f;
-
-    // Inter-flock repulsion: boids from different flocks repel
-    float interFlockRepulsionWeight = 1.5f;
-
-    // Predator-prey: strengths applied when this flock acts as predator or prey
-    float predatorAttractionWeight = 2.0f;   // chase strength (as predator)
-    float preyFearWeight = 3.0f;             // flee strength (as prey)
-
-    // Hunger/satiety system: 0.0 = starved (dead), 1.0 = fully satiated
-    // hunger decays each second by hungerDecayRate
-    float hungerDecayRate = 0.008f;          // per-second decay (125s from full to death)
-
-    // Speed modulation: when satiated, boids are slower/lazier; when hungry, faster/aggressive
-    // Effective speed = maxSpeed * lerp(hungerSpeedMax, hungerSpeedMin, hunger) * weightSpeedMod
-    // invertHungerSpeed reverses the curve: true = faster when full, slower when hungry
-    float hungerSpeedMin = 0.6f;             // speed multiplier when fully satiated (slower)
-    float hungerSpeedMax = 1.4f;             // speed multiplier when extremely hungry (faster)
-    bool  invertHungerSpeed = false;          // reverse hunger-speed curve
-
-    // Weight system: body mass affects speed and rendering size
-    // weight range [minWeight, maxWeight], default 1.0 for all boids
-    float weightSpeedPenalty = 0.3f;     // weight-to-speed penalty coefficient (0=no effect)
-    float maxWeight = 2.0f;              // max body weight multiplier
-    float minWeight = 0.5f;              // min body weight multiplier
-
-    // Predation success/escape rates
-    float chaseSuccessBase = 0.30f;          // base probability predator catches prey
-    float escapeSuccessBase = 0.55f;         // base probability prey escapes
-    float predationMinHunger = 0.50f;        // only hunt when hunger is below this threshold
-    float predationKillHunger = 0.10f;       // below this hunger: 100% flock chases AND kills
-    float predationParticipationRate = 0.10f; // base fraction of flock that chases when well-fed (0.01-1.0)
-
-    // Kill streak & weight gain: consecutive kills build body mass
-    float weightGainPerKill = 0.02f;      // weight increase per consecutive kill
-    float weightDecayRate = 0.001f;       // weight lost per second when idle (beyond decayDelay)
-    float streakTimeout = 3.0f;           // seconds between kills to count as consecutive
-    float decayDelay = 5.0f;             // seconds idle before weight starts decaying
-
-    // Chase range: how close predator must be to trigger a predation check (pixels)
-    float chaseRange = 25.0f;
-
-    // Visual: hunger flash when hunger drops below this threshold
+struct HungerSuf {
+    float hungerDecayRate = 0.008f;
+    float hungerSpeedMin = 0.6f;
+    float hungerSpeedMax = 1.4f;
+    bool  invertHungerSpeed = false;
     float hungerFlashThreshold = 0.30f;
+    float forageRange = 150.0f;
+    float forageWeight = 2.0f;
+    float forageHungerThreshold = 0.5f;
+};
 
-    // Reproduction: per-flock population dynamics (sex-based pairing)
-    // Triggered once per reproductionInterval (1 pseudo-quarter by default)
-    float reproductionMinOffspring = 1.0f;  // Min offspring per male-female pair
-    float reproductionMaxOffspring = 5.0f;  // Max offspring per male-female pair
-    int   maxFlockSize = 2000;              // Hard cap: no new spawns when flock reaches this size
-    float reproductionMinHunger = 0.60f;   // Min hunger (0.0-1.0) to be eligible (must be satiated)
-    float reproductionInterval = 60.0f;    // Seconds between reproduction cycles (1 pseudo-quarter default)
-    float adultAge = 240.0f;                // Seconds to reach full adult size (same as 1 pseudo-year default)
+struct PredationSuf {
+    float chaseSuccessBase = 0.30f;
+    float escapeSuccessBase = 0.55f;
+    float predationMinHunger = 0.50f;
+    float predationKillHunger = 0.10f;
+    float predationParticipationRate = 0.10f;
+    float chaseRange = 25.0f;
+};
 
-    // Foraging: active plant-seeking when hungry
-    float forageRange = 150.0f;             // How far a boid can detect plants (pixels)
-    float forageWeight = 2.0f;              // Turn force toward nearest plant
-    float forageHungerThreshold = 0.5f;     // Hunger below this value activates foraging
+struct BodySuf {
+    float maxWeight = 2.0f;
+    float minWeight = 0.5f;
+    float weightGainPerKill = 0.02f;
+    float weightDecayRate = 0.001f;
+    float streakTimeout = 3.0f;
+    float decayDelay = 5.0f;
+};
 
-    // Limits
-    float maxSpeed = 300.0f;
-    float maxForce = 3000.0f;
-    float boidSize = 6.0f;
+struct InterFlockSuf {
+    float interFlockRepulsionWeight = 1.5f;
+    float predatorAttractionWeight = 2.0f;
+    float preyFearWeight = 3.0f;
+};
 
-    // Appearance: sex-based coloring
+struct ReproductionSuf {
+    float reproductionMinOffspring = 1.0f;
+    float reproductionMaxOffspring = 5.0f;
+    int   maxFlockSize = 2000;
+    float reproductionMinHunger = 0.60f;
+    float reproductionInterval = 60.0f;
+    float adultAge = 240.0f;
+};
+
+struct AgeSuf {
+    float juvenileAge = 60.0f;
+    float youngAge = 240.0f;
+    float elderAge = 960.0f;
+    float maxLifespan = 1200.0f;
+    float ageSpeedJuvenile = 0.6f;
+    float ageSpeedYoung = 0.85f;
+    float ageSpeedAdult = 1.0f;
+    float ageSpeedElder = 0.7f;
+    float ageSizeJuvenile = 0.5f;
+    float ageSizeYoung = 0.8f;
+    float ageSizeAdult = 1.0f;
+    float ageSizeElder = 0.9f;
+};
+
+struct FatigueSuf {
+    float fatigueAccumRate = 0.02f;
+    float fatigueRecoveryRate = 0.15f;
+    float fatigueSpeedPenalty = 0.4f;
+};
+
+struct GenderSuf {
+    float sexSpeedMale = 1.05f;
+    float sexSpeedFemale = 0.95f;
+    float sexSizeMale = 1.0f;
+    float sexSizeFemale = 0.9f;
+};
+
+struct PregnancySuf {
+    float pregnancyDuration = 10.0f;
+    float postpartumRecovery = 30.0f;
+    float offspringHungerBoost = 0.3f;
+};
+
+struct CombatSuf {
+    float combatRadius = 30.0f;       // Distance within which same-flock males may fight
+    float combatProbability = 0.30f;  // Base chance per eligible encounter per second
+    float combatFatigueGain = 0.15f;  // Fatigue added to loser per fight
+    float combatCooldown = 5.0f;      // Seconds before a boid can fight again
+};
+
+struct HatredSuf {
+    float hatredGainPerKill = 0.25f;       // Hatred gained by surviving flock-mates per kill
+    float hatredDecayRate = 0.02f;         // Hatred decay per second
+    float hatredFleeRadiusBoost = 3.0f;    // Multiplier on flee range when hating
+    float hatredFleeWeightBoost = 2.0f;    // Extra flee weight when hating
+};
+
+// Escape strategy: how prey flees from predators
+// NOTE: This is a float pretending to be an enum for ParamRegistry compatibility.
+// 0.0=DirectFlee, 1.0=ZigzagFlee, 2.0=GroupFlee, 3.0=CoverFlee
+enum class EscapeStrategy : uint8_t {
+    DirectFlee = 0,  // Flee directly away from predator (fastest)
+    ZigzagFlee = 1,   // Erratic zigzag pattern (harder to track)
+    GroupFlee  = 2,   // Flee toward nearest flock-mate (safety in numbers)
+    CoverFlee  = 3,   // Flee toward nearest plant (use as cover)
+};
+
+struct EscapeSuf {
+    float escapeStrategy = 0.0f;        // Dominant strategy (0=Direct, 1=Zigzag, 2=Group, 3=Cover)
+    float escapeStrategyMix = 0.4f;     // Blend with DirectFlee (0.0=pure, 0.5=50/50, 1.0=equal)
+    float escapeZigzagAmp = 0.6f;       // Random perpendicular amplitude for zigzag [0.0-1.0]
+};
+
+// Defensive cooperation: flock-mates counter-attack when one is killed
+struct DefenseSuf {
+    float defenseRadius = 180.0f;           // How far flock-mates notice an attack (pixels)
+    float defenseResponseWeight = 1.2f;    // Attraction force toward predator when defending
+    float defenseGroupThreshold = 2.0f;    // Min nearby allies needed to trigger mobbing
+};
+
+// Cohesion dynamics: cohesion weight is modulated by environmental factors
+struct CohesionDynSuf {
+    float cohesionThreatBoost = 2.0f;   // Cohesion multiplier when predator nearby
+    float cohesionHungerDecay = 0.3f;   // Cohesion reduction per unit hunger below threshold
+    float cohesionDensityDecay = 0.5f;  // Cohesion reduction in high local density areas
+    float cohesionBaseWeight = 1.0f;    // Base cohesion weight (default 1.0)
+};
+
+// Phase 1.7: Attack hit/miss, damage and dodge system
+struct HealthSuf {
+    float dodgeChanceBase = 0.3f;      // Base dodge probability when attacked [0.0, 1.0]
+    float damageToHealth = 0.5f;       // Damage converted to health loss per attack
+    float healthRegenRate = 0.01f;     // Health recovered per second (when hunger > 0.5)
+    float healthInitial = 1.0f;        // Health for newly spawned boids
+};
+
+struct AppearanceSuf {
     bool  useSexColors = false;
-    float maleColorR = 0.50f, maleColorG = 0.70f, maleColorB = 0.95f;    // Blue-tinted male
-    float femaleColorR = 0.95f, femaleColorG = 0.50f, femaleColorB = 0.55f; // Pink-tinted female
-
-    // Sprite: per-flock texture (empty = use solid color)
+    float maleColorR = 0.50f, maleColorG = 0.70f, maleColorB = 0.95f;
+    float femaleColorR = 0.95f, femaleColorG = 0.50f, femaleColorB = 0.55f;
     std::string spriteName;
-
-    // Sprite upright mode: when true, sprite always stays upright (horizontal
-    // mirror instead of 180-degree rotation when moving left)
     bool uprightSprite = false;
+};
 
-    // Hard collision radius in pixels (0 = no collision; slider 0-50, 1 unit = 2 px)
-    float hardCollisionRadius = 14.0f;
+// Composite FlockParams -- all float sub-structs are standard-layout for offsetof().
+// AppearanceSuf is non-standard-layout (contains std::string) but is never used
+// with offsetof(); its fields are accessed directly.
+struct FlockParams {
+    MovementSuf    movement;
+    PerceptionSuf  perception;
+    BoundarySuf    boundary;
+    HungerSuf      hunger;
+    PredationSuf   predation;
+    BodySuf        body;
+    InterFlockSuf  interFlock;
+    ReproductionSuf reproduction;
+    AgeSuf         age;
+    FatigueSuf     fatigue;
+    GenderSuf      gender;
+    PregnancySuf   pregnancy;
+    CombatSuf      combat;
+    HatredSuf      hatred;
+    EscapeSuf      escape;
+    DefenseSuf     defense;
+    CohesionDynSuf cohesionDyn;
+    HealthSuf      health;
+    NestPrefSuf    nestPref;
+    AppearanceSuf  appearance;
 };
 
 // Default flock color palette (12 entries, recycled for user-added flocks)
@@ -139,6 +254,15 @@ struct FlockData {
     std::vector<float> weight;      // body mass, default 1.0, range [minWeight, maxWeight]
     std::vector<int>   killStreak;  // consecutive kills count
     std::vector<float> lastKillTime;// simTime of last kill (-1e9f = never killed)
+    std::vector<uint8_t> state;     // BoidState enum, 1 byte each
+    std::vector<float> stateTimer;  // seconds in current state
+    std::vector<uint8_t> ageStage;  // AgeStage enum, 1 byte each
+    std::vector<float> fatigue;     // 0.0 = fresh, 1.0 = exhausted
+    std::vector<float> lastBirthTime;// simTime of last birth (-1e9f = never)
+    std::vector<float> lastCombatTime;// simTime of last fight (-1e9f = never)
+    std::vector<uint8_t> hatredTarget;   // Flock ID of most-hated flock (255 = none)
+    std::vector<float>    hatredLevel;   // Hatred intensity [0.0, 1.0]
+    std::vector<float>    health;        // 0.0 = dead, 1.0 = full health (Phase 1.7)
     int count = 0;
 
     void reserve(size_t capacity) {
@@ -156,10 +280,19 @@ struct FlockData {
         weight.reserve(capacity);
         killStreak.reserve(capacity);
         lastKillTime.reserve(capacity);
+        state.reserve(capacity);
+        stateTimer.reserve(capacity);
+        ageStage.reserve(capacity);
+        fatigue.reserve(capacity);
+        lastBirthTime.reserve(capacity);
+        lastCombatTime.reserve(capacity);
+        hatredTarget.reserve(capacity);
+        hatredLevel.reserve(capacity);
+        health.reserve(capacity);
     }
 
     void add(float x, float y, float vx, float vy, int fid, float cr, float cg, float cb,
-             uint8_t s = 0) {
+             uint8_t s = 0, float w = 1.0f) {
         posX.push_back(x);
         posY.push_back(y);
         velX.push_back(vx);
@@ -171,9 +304,18 @@ struct FlockData {
         hunger.push_back(0.8f);  // Start moderately satiated
         age.push_back(0.0f);     // Newborn age
         sex.push_back(s);
-        weight.push_back(1.0f);       // Default body mass
+        weight.push_back(w);           // Inherited body mass
         killStreak.push_back(0);      // No kills yet
         lastKillTime.push_back(-1e9f);// Never killed
+        state.push_back(static_cast<uint8_t>(BoidState::IDLE));
+        stateTimer.push_back(0.0f);
+        ageStage.push_back(static_cast<uint8_t>(AgeStage::Adult));  // New spawns start as Adult
+        fatigue.push_back(0.0f);  // Start fresh
+        lastBirthTime.push_back(-1e9f);  // Never given birth
+        lastCombatTime.push_back(-1e9f);  // Never fought
+        hatredTarget.push_back(255);       // No hated flock
+        hatredLevel.push_back(0.0f);       // No hatred
+        health.push_back(1.0f);            // Full health for new spawns
         ++count;
     }
 
@@ -194,6 +336,15 @@ struct FlockData {
         weight[index] = weight[last];
         killStreak[index] = killStreak[last];
         lastKillTime[index] = lastKillTime[last];
+        state[index] = state[last];
+        stateTimer[index] = stateTimer[last];
+        ageStage[index] = ageStage[last];
+        fatigue[index] = fatigue[last];
+        lastBirthTime[index] = lastBirthTime[last];
+        lastCombatTime[index] = lastCombatTime[last];
+        hatredTarget[index] = hatredTarget[last];
+        hatredLevel[index] = hatredLevel[last];
+        health[index] = health[last];
         posX.pop_back();
         posY.pop_back();
         velX.pop_back();
@@ -208,6 +359,15 @@ struct FlockData {
         weight.pop_back();
         killStreak.pop_back();
         lastKillTime.pop_back();
+        state.pop_back();
+        stateTimer.pop_back();
+        ageStage.pop_back();
+        fatigue.pop_back();
+        lastBirthTime.pop_back();
+        lastCombatTime.pop_back();
+        hatredTarget.pop_back();
+        hatredLevel.pop_back();
+        health.pop_back();
         --count;
     }
 
@@ -239,6 +399,15 @@ struct FlockData {
         weight.clear();
         killStreak.clear();
         lastKillTime.clear();
+        state.clear();
+        stateTimer.clear();
+        ageStage.clear();
+        fatigue.clear();
+        lastBirthTime.clear();
+        lastCombatTime.clear();
+        hatredTarget.clear();
+        hatredLevel.clear();
+        health.clear();
         count = 0;
     }
 };

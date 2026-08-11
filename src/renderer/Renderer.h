@@ -2,6 +2,7 @@
 
 #include "simulation/FlockData.h"
 #include "simulation/PlantData.h"
+#include "simulation/NestData.h"
 #include <vector>
 #include <string>
 #include <QOpenGLFunctions_3_3_Core>
@@ -19,10 +20,17 @@ public:
 
     void init();
     void resize(int width, int height);
-    void render(const FlockData& data, const PlantData& plants, float worldW, float worldH,
-                uint64_t frameIndex, bool hungerFlashEnabled = true,
+    void render(const FlockData& data, const PlantData& plants, const NestData& nests,
+                const std::vector<float>& flockColorR,
+                const std::vector<float>& flockColorG,
+                const std::vector<float>& flockColorB,
+                float worldW, float worldH,
+                float simTime = 0.0f,
+                uint64_t frameIndex = 0, bool hungerFlashEnabled = true,
                 const std::vector<std::string>& flockSpriteNames = {},
-                const std::vector<bool>& flockUprightFlags = {});
+                const std::vector<bool>& flockUprightFlags = {},
+                const std::vector<float>& flockAgeSizes = {},
+                const std::vector<float>& flockSexSizes = {});
 
     void setBoidSize(float size) { m_boidSize = size; }
     float boidSize() const { return m_boidSize; }

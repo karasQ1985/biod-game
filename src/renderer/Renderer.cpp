@@ -1,5 +1,6 @@
 #include "Renderer.h"
 #include "simulation/PlantData.h"
+#include "core/WorldConstants.h"
 #include <QMatrix4x4>
 #include <QImage>
 #include <QFileInfo>
@@ -79,6 +80,7 @@ in vec3 vColor;
 in float vTexLayer;
 in vec2 vUV;
 uniform sampler2DArray uSprites;
+uniform float uAmbientLight;
 out vec4 FragColor;
 void main() {
     float useSprite = step(0.5, vTexLayer);
@@ -86,6 +88,7 @@ void main() {
     // Sprite: use raw texture RGB (no color tint). Solid: use boid color.
     vec3 rgb = mix(vColor, texColor.rgb, useSprite);
     float alpha = mix(1.0, texColor.a, useSprite);
+    rgb *= uAmbientLight;
     FragColor = vec4(rgb, alpha);
 }
 )glsl";
@@ -295,12 +298,25 @@ void Renderer::resize(int width, int height)
     m_viewHeight = height;
 }
 
-void Renderer::render(const FlockData& data, const PlantData& plants, float worldW, float worldH,
-                      uint64_t frameIndex, bool hungerFlashEnabled,
+void Renderer::render(const FlockData& data, const PlantData& plants, const NestData& nests,
+                       const std::vector<float>& flockColorR,
+                       const std::vector<float>& flockColorG,
+                       const std::vector<float>& flockColorB,
+                       float worldW, float worldH,
+                       float simTime,
+                       uint64_t frameIndex, bool hungerFlashEnabled,
                       const std::vector<std::string>& flockSpriteNames,
-                      const std::vector<bool>& flockUprightFlags)
+                      const std::vector<bool>& flockUprightFlags,
+                      const std::vector<float>& flockAgeSizes,
+                      const std::vector<float>& flockSexSizes)
 {
     glUseProgram(m_program);
+
+    // ---- Day/night cycle (Phase 3.1c) ----
+    float dayPhase = std::fmod(simTime / WorldConst::SECONDS_PER_SIM_DAY, 1.0f);
+    float ambientLight = 0.3f + 0.7f * std::sin(dayPhase * 3.14159265f);  // PI (single cycle per 30s)
+    GLint uAmbientLoc = glGetUniformLocation(m_program, "uAmbientLight");
+    glUniform1f(uAmbientLoc, ambientLight);
 
     QMatrix4x4 proj;
     float halfW = worldW / (2.0f * m_viewZoom);
@@ -361,11 +377,31 @@ void Renderer::render(const FlockData& data, const PlantData& plants, float worl
                 m_instanceData[off + 5] = data.colorG[i];
                 m_instanceData[off + 6] = data.colorB[i];
             }
-            // Combined scale: age-based growth * weight-based size
-            float ageFrac = std::min(data.age[i] / defaultAdultAge, 1.0f);
-            float ageScale = 0.4f + 0.6f * ageFrac;
+            // Combined scale: age-stage-based growth * weight-based size
+            float ageScale = 1.0f;
+            if (!flockAgeSizes.empty() && fid >= 0) {
+                int base = fid * 4;
+                if (base + 3 < static_cast<int>(flockAgeSizes.size())) {
+                    switch (static_cast<AgeStage>(data.ageStage[i])) {
+                    case AgeStage::Juvenile: ageScale = flockAgeSizes[base + 0]; break;
+                    case AgeStage::Young:    ageScale = flockAgeSizes[base + 1]; break;
+                    case AgeStage::Adult:    ageScale = flockAgeSizes[base + 2]; break;
+                    case AgeStage::Elder:    ageScale = flockAgeSizes[base + 3]; break;
+                    }
+                }
+            }
             float weightScale = std::sqrt(data.weight[i]);
-            m_instanceData[off + 7] = ageScale * weightScale;
+
+            // Sex-based size scaling
+            float sexScale = 1.0f;
+            if (!flockSexSizes.empty() && fid >= 0) {
+                int base = fid * 2;
+                if (base + 1 < static_cast<int>(flockSexSizes.size())) {
+                    sexScale = (data.sex[i] == 0) ? flockSexSizes[base] : flockSexSizes[base + 1];
+                }
+            }
+
+            m_instanceData[off + 7] = ageScale * weightScale * sexScale;
             m_instanceData[off + 8] = layer;
             m_instanceData[off + 9] = upright;
         }
@@ -410,6 +446,45 @@ void Renderer::render(const FlockData& data, const PlantData& plants, float worl
         glBindVertexArray(m_vao);
         glDrawElementsInstanced(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT,
                                 0, alivePlants);
+    }
+
+    // ---- Nest rendering (Phase 3.1) ----
+    if (nests.count > 0) {
+        int stride = 10;
+        int neededSize = nests.count * stride;
+        if (static_cast<int>(m_instanceData.size()) < neededSize)
+            m_instanceData.resize(neededSize);
+
+        int nFlockColors = static_cast<int>(flockColorR.size());
+        for (int n = 0; n < nests.count; ++n) {
+            int off = n * stride;
+            m_instanceData[off + 0] = nests.posX[n];
+            m_instanceData[off + 1] = nests.posY[n];
+            // Color: flock color if owned, gray if unowned
+            int owner = nests.ownerFlock[n];
+            if (owner >= 0 && owner < nFlockColors) {
+                m_instanceData[off + 2] = flockColorR[owner];
+                m_instanceData[off + 3] = flockColorG[owner];
+                m_instanceData[off + 4] = flockColorB[owner];
+            } else {
+                m_instanceData[off + 2] = 0.5f;  // Gray for unowned
+                m_instanceData[off + 3] = 0.5f;
+                m_instanceData[off + 4] = 0.5f;
+            }
+            m_instanceData[off + 5] = 0.0f;
+            m_instanceData[off + 6] = 0.0f;
+            m_instanceData[off + 7] = 1.0f;    // Full scale
+            m_instanceData[off + 8] = 0.0f;    // No sprite
+            m_instanceData[off + 9] = 0.0f;    // No upright
+        }
+
+        float nestSize = m_boidSize * 2.5f;  // Nests are larger
+        glUniform1f(uSizeLoc, nestSize);
+        glBindBuffer(GL_ARRAY_BUFFER, m_instanceVBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, neededSize * sizeof(float), m_instanceData.data());
+        glBindVertexArray(m_vao);
+        glDrawElementsInstanced(GL_TRIANGLES, m_meshIndexCount, GL_UNSIGNED_INT,
+                                0, nests.count);
     }
 
     glBindVertexArray(0);

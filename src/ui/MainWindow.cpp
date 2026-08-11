@@ -31,8 +31,11 @@
 #include <QApplication>
 
 // ---- Parameter registration macros ----
-#define HO(field) offsetof(FlockParams, field)
+// HO_N: nested offset for FlockParams sub-struct fields
+// PO: direct offset for PlantParams fields (no sub-structs)
+#define HO_N(sub, field) (offsetof(FlockParams, sub) + offsetof(decltype(FlockParams::sub), field))
 #define PO(field) offsetof(PlantParams, field)
+#define NO(field) offsetof(NestParams, field)
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -147,6 +150,18 @@ void MainWindow::setupToolbar()
     toolbar->addWidget(m_clearBtn);
     connect(m_clearBtn, &QPushButton::clicked, this, &MainWindow::onClearAll);
 
+    toolbar->addSeparator();
+
+    auto* saveBtn = new QPushButton("Save");
+    saveBtn->setToolTip("Save configuration to file (.biodcfg)");
+    toolbar->addWidget(saveBtn);
+    connect(saveBtn, &QPushButton::clicked, this, &MainWindow::onSaveConfig);
+
+    auto* loadBtn = new QPushButton("Load");
+    loadBtn->setToolTip("Load configuration from file (.biodcfg)");
+    toolbar->addWidget(loadBtn);
+    connect(loadBtn, &QPushButton::clicked, this, &MainWindow::onLoadConfig);
+
     updateFlockButtons();
 }
 
@@ -178,195 +193,314 @@ void MainWindow::updateFlockCombo()
 
 void MainWindow::setupUI()
 {
-    auto* scroll = new QScrollArea(this);
-    auto* dock = new QWidget(scroll);
-    auto* mainLayout = new QVBoxLayout(dock);
-    mainLayout->setContentsMargins(6, 4, 6, 4);
-    mainLayout->setSpacing(4);
+    // Tab-based layout for scalable parameter organization.
+    // Each tab hosts a subset of group boxes in a scrollable area.
+    // Tabs are designed to accommodate future expansion:
+    //   - Behavior:   Reynolds + Movement + Perception
+    //   - Interaction: Predation + Inter-Flock + Foraging
+    //   - Lifecycle:   Hunger + Reproduction (+ age/fatigue in Phase 1)
+    //   - Appearance:  Colors + Sprite + Size
+    //   - Relations:   Inter-flock relationship matrix
+    //   - World:       Boundary + Plants + Global settings
+
+    auto* tabWidget = new QTabWidget();
+    tabWidget->setStyleSheet(
+        "QTabWidget::pane { border: 1px solid #4a4a4a; } "
+        "QTabBar::tab { background: #2b2b2b; color: #999; "
+        "padding: 4px 10px; font-size: 11px; border: 1px solid #4a4a4a; "
+        "border-bottom: none; min-width: 60px; } "
+        "QTabBar::tab:selected { background: #3a3a3a; color: #ddd; } "
+        "QTabBar::tab:hover { background: #404040; }");
 
     auto& sim = m_glWidget->simulation();
     auto& p = sim.params();
     auto& pp = sim.plantParams();
 
-    // Active flock indicator
-    m_flockLabel = new QLabel("\u5f53\u524d\u7fa4\u4f53: Flock A");
-    m_flockLabel->setStyleSheet("font-weight: bold; color: #aaa; padding: 4px;");
-    mainLayout->addWidget(m_flockLabel);
-
-    // Common Win10-native group box style
+    // Common style for all group boxes
     const QString groupStyle =
         "QGroupBox { font-weight: bold; color: #000000; "
         "border: 1px solid #4a4a4a; border-radius: 3px; margin-top: 7px; "
         "padding-top: 10px; } "
         "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }";
 
+    // Helper: create a scrollable tab page and return its content layout
+    auto makeTab = [&](const char* title) -> QVBoxLayout* {
+        auto* page = new QWidget();
+        auto* scroll = new QScrollArea();
+        scroll->setWidgetResizable(true);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->setWidget(page);
+        auto* lay = new QVBoxLayout(page);
+        lay->setContentsMargins(6, 4, 6, 4);
+        lay->setSpacing(4);
+        tabWidget->addTab(scroll, QString::fromUtf8(title));
+        return lay;
+    };
+
     auto& reg = m_params;
 
     // ================================================================
-    // Register all FlockParams parameters
+    // Register all parameters (same as before, unchanged)
     // ================================================================
 
     // Group: Hunger & Satiety
-    reg.reg({"\u8870\u51cf\u901f\u7387 (Decay Rate)",       "hunger",   HO(hungerDecayRate),       0,   100, ScaleMode::Div1000,   static_cast<int>(p.hungerDecayRate * 1000),   false});
-    reg.reg({"\u9971\u8179\u901f\u5ea6 (Speed Min)",         "hunger",   HO(hungerSpeedMin),        30,  100, ScaleMode::Div100,    static_cast<int>(p.hungerSpeedMin * 100),     false});
-    reg.reg({"\u9965\u997f\u901f\u5ea6 (Speed Max)",         "hunger",   HO(hungerSpeedMax),        100, 250, ScaleMode::Div100,    static_cast<int>(p.hungerSpeedMax * 100),     false});
-    reg.reg({"\u95ea\u70c1\u9608\u503c (Flash Threshold)",   "hunger",   HO(hungerFlashThreshold),  5,   80,  ScaleMode::Div100,    static_cast<int>(p.hungerFlashThreshold * 100), false});
+    reg.reg({"\u8870\u51cf\u901f\u7387 (Decay Rate)",       "hunger",   HO_N(hunger, hungerDecayRate),       0,   100, ScaleMode::Div1000,   static_cast<int>(p.hunger.hungerDecayRate * 1000),   false});
+    reg.reg({"\u9971\u8179\u901f\u5ea6 (Speed Min)",         "hunger",   HO_N(hunger, hungerSpeedMin),        30,  100, ScaleMode::Div100,    static_cast<int>(p.hunger.hungerSpeedMin * 100),     false});
+    reg.reg({"\u9965\u997f\u901f\u5ea6 (Speed Max)",         "hunger",   HO_N(hunger, hungerSpeedMax),        100, 250, ScaleMode::Div100,    static_cast<int>(p.hunger.hungerSpeedMax * 100),     false});
+    reg.reg({"\u95ea\u70c1\u9608\u503c (Flash Threshold)",   "hunger",   HO_N(hunger, hungerFlashThreshold),  5,   80,  ScaleMode::Div100,    static_cast<int>(p.hunger.hungerFlashThreshold * 100), false});
 
     // Group: Predation & Escape
-    reg.reg({"\u6355\u730e\u6210\u529f\u7387 (Chase Success)",          "predation", HO(chaseSuccessBase),             0,   100, ScaleMode::Div100,    static_cast<int>(p.chaseSuccessBase * 100),              false});
-    reg.reg({"\u9003\u79bb\u6210\u529f\u7387 (Escape Success)",         "predation", HO(escapeSuccessBase),            0,   100, ScaleMode::Div100,    static_cast<int>(p.escapeSuccessBase * 100),             false});
-    reg.reg({"\u6355\u730e\u8303\u56f4 (Chase Range)",                  "predation", HO(chaseRange),                   5,   100, ScaleMode::OneToOne,  static_cast<int>(p.chaseRange),                           false});
-    reg.reg({"\u730e\u6740\u9965\u997f\u9608\u503c (Hunt Hunger)",       "predation", HO(predationMinHunger),           5,   95,  ScaleMode::Div100,    static_cast<int>(p.predationMinHunger * 100),            false});
-    reg.reg({"\u51fb\u6740\u9965\u997f\u9608\u503c (Kill Hunger)",       "predation", HO(predationKillHunger),          1,   50,  ScaleMode::Div100,    static_cast<int>(p.predationKillHunger * 100),           false});
-    reg.reg({"\u9971\u8179\u53c2\u4e0e\u7387% (Participation %)",      "predation", HO(predationParticipationRate),   1,   100, ScaleMode::Div100,    static_cast<int>(p.predationParticipationRate * 100),    false});
-    reg.reg({"\u8fde\u6740\u589e\u91cd (Kill Weight Gain)",     "predation", HO(weightGainPerKill),          1,   200, ScaleMode::Div1000,   static_cast<int>(p.weightGainPerKill * 1000),            false});
-    reg.reg({"\u95f2\u7f6e\u8870\u51cf/\u79d2 (Decay Rate/s)",   "predation", HO(weightDecayRate),            1,   20,  ScaleMode::Div1000,   static_cast<int>(p.weightDecayRate * 1000),              false});
-    reg.reg({"\u8fde\u6740\u8d85\u65f6/\u79d2 (Streak Timeout)", "predation", HO(streakTimeout),              5,   100, ScaleMode::Div10,     static_cast<int>(p.streakTimeout * 10),                  false});
-    reg.reg({"\u8870\u51cf\u5ef6\u8fdf/\u79d2 (Decay Delay)",    "predation", HO(decayDelay),                 1,   30,  ScaleMode::OneToOne,  static_cast<int>(p.decayDelay),                          false});
-    reg.reg({"\u6700\u5927\u4f53\u91cd (Max Weight)",            "predation", HO(maxWeight),                 10,  50,  ScaleMode::Div10,     static_cast<int>(p.maxWeight * 10),                      false});
-    reg.reg({"\u6700\u5c0f\u4f53\u91cd (Min Weight)",            "predation", HO(minWeight),                  1,   20,  ScaleMode::Div10,     static_cast<int>(p.minWeight * 10),                      false});
+    reg.reg({"\u6355\u730e\u6210\u529f\u7387 (Chase Success)",          "predation", HO_N(predation, chaseSuccessBase),             0,   100, ScaleMode::Div100,    static_cast<int>(p.predation.chaseSuccessBase * 100),              false});
+    reg.reg({"\u9003\u79bb\u6210\u529f\u7387 (Escape Success)",         "predation", HO_N(predation, escapeSuccessBase),            0,   100, ScaleMode::Div100,    static_cast<int>(p.predation.escapeSuccessBase * 100),             false});
+    reg.reg({"\u6355\u730e\u8303\u56f4 (Chase Range)",                  "predation", HO_N(predation, chaseRange),                   5,   100, ScaleMode::OneToOne,  static_cast<int>(p.predation.chaseRange),                           false});
+    reg.reg({"\u730e\u6740\u9965\u997f\u9608\u503c (Hunt Hunger)",       "predation", HO_N(predation, predationMinHunger),           5,   95,  ScaleMode::Div100,    static_cast<int>(p.predation.predationMinHunger * 100),            false});
+    reg.reg({"\u51fb\u6740\u9965\u997f\u9608\u503c (Kill Hunger)",       "predation", HO_N(predation, predationKillHunger),          1,   50,  ScaleMode::Div100,    static_cast<int>(p.predation.predationKillHunger * 100),           false});
+    reg.reg({"\u9971\u8179\u53c2\u4e0e\u7387% (Participation %)",      "predation", HO_N(predation, predationParticipationRate),   1,   100, ScaleMode::Div100,    static_cast<int>(p.predation.predationParticipationRate * 100),    false});
+    reg.reg({"\u8fde\u6740\u589e\u91cd (Kill Weight Gain)",     "predation", HO_N(body, weightGainPerKill),          1,   200, ScaleMode::Div1000,   static_cast<int>(p.body.weightGainPerKill * 1000),            false});
+    reg.reg({"\u95f2\u7f6e\u8870\u51cf/\u79d2 (Decay Rate/s)",   "predation", HO_N(body, weightDecayRate),            1,   20,  ScaleMode::Div1000,   static_cast<int>(p.body.weightDecayRate * 1000),              false});
+    reg.reg({"\u8fde\u6740\u8d85\u65f6/\u79d2 (Streak Timeout)", "predation", HO_N(body, streakTimeout),              5,   100, ScaleMode::Div10,     static_cast<int>(p.body.streakTimeout * 10),                  false});
+    reg.reg({"\u8870\u51cf\u5ef6\u8fdf/\u79d2 (Decay Delay)",    "predation", HO_N(body, decayDelay),                 1,   30,  ScaleMode::OneToOne,  static_cast<int>(p.body.decayDelay),                          false});
+    reg.reg({"\u6700\u5927\u4f53\u91cd (Max Weight)",            "predation", HO_N(body, maxWeight),                 10,  50,  ScaleMode::Div10,     static_cast<int>(p.body.maxWeight * 10),                      false});
+    reg.reg({"\u6700\u5c0f\u4f53\u91cd (Min Weight)",            "predation", HO_N(body, minWeight),                  1,   20,  ScaleMode::Div10,     static_cast<int>(p.body.minWeight * 10),                      false});
 
     // Group: Inter-Flock
-    reg.reg({"\u7fa4\u95f4\u65a5\u529b (Inter-Flock Repulsion)", "interflock", HO(interFlockRepulsionWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.interFlockRepulsionWeight * 10), false});
-    reg.reg({"\u6355\u98df\u5438\u5f15\u529b (Predator Attraction)","interflock", HO(predatorAttractionWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.predatorAttractionWeight * 10), false});
-    reg.reg({"\u730e\u7269\u6050\u60e7 (Prey Fear)",            "interflock", HO(preyFearWeight),             0, 50, ScaleMode::Div10, static_cast<int>(p.preyFearWeight * 10),         false});
+    reg.reg({"\u7fa4\u95f4\u65a5\u529b (Inter-Flock Repulsion)", "interflock", HO_N(interFlock, interFlockRepulsionWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.interFlock.interFlockRepulsionWeight * 10), false});
+    reg.reg({"\u6355\u98df\u5438\u5f15\u529b (Predator Attraction)","interflock", HO_N(interFlock, predatorAttractionWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.interFlock.predatorAttractionWeight * 10), false});
+    reg.reg({"\u730e\u7269\u6050\u60e7 (Prey Fear)",            "interflock", HO_N(interFlock, preyFearWeight),             0, 50, ScaleMode::Div10, static_cast<int>(p.interFlock.preyFearWeight * 10),         false});
 
     // Group: Reynolds
-    reg.reg({"\u5206\u79bb (Separation)", "reynolds", HO(separationWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.separationWeight * 10), false});
-    reg.reg({"\u5bf9\u9f50 (Alignment)",  "reynolds", HO(alignmentWeight),  0, 50, ScaleMode::Div10, static_cast<int>(p.alignmentWeight * 10),  false});
-    reg.reg({"\u805a\u96c6 (Cohesion)",   "reynolds", HO(cohesionWeight),   0, 50, ScaleMode::Div10, static_cast<int>(p.cohesionWeight * 10),   false});
+    reg.reg({"\u5206\u79bb (Separation)", "reynolds", HO_N(perception, separationWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.perception.separationWeight * 10), false});
+    reg.reg({"\u5bf9\u9f50 (Alignment)",  "reynolds", HO_N(perception, alignmentWeight),  0, 50, ScaleMode::Div10, static_cast<int>(p.perception.alignmentWeight * 10),  false});
+    reg.reg({"\u805a\u96c6 (Cohesion)",   "reynolds", HO_N(perception, cohesionWeight),   0, 50, ScaleMode::Div10, static_cast<int>(p.perception.cohesionWeight * 10),   false});
 
-    // ---- Group: Movement & Collision (Max Speed, Weight, Hard Collision) ----
-    reg.reg({"\u6700\u5927\u901f\u5ea6 (Max Speed)", "movement", HO(maxSpeed), 50, 600, ScaleMode::OneToOne, static_cast<int>(p.maxSpeed), false});
-    reg.reg({"\u4f53\u91cd\u901f\u5ea6\u60e9\u7f5a (Weight Penalty)", "movement", HO(weightSpeedPenalty), 0, 200, ScaleMode::Div100, static_cast<int>(p.weightSpeedPenalty * 100), false});
-    reg.reg({"\u786c\u78b0\u649e\u8ddd\u79bb (Hard Collision)", "movement", HO(hardCollisionRadius), 0, 50, ScaleMode::Multiply2, static_cast<int>(p.hardCollisionRadius / 2.0f), false});
+    // Group: Movement & Collision
+    reg.reg({"\u6700\u5927\u901f\u5ea6 (Max Speed)", "movement", HO_N(movement, maxSpeed), 50, 600, ScaleMode::OneToOne, static_cast<int>(p.movement.maxSpeed), false});
+    reg.reg({"\u4f53\u91cd\u901f\u5ea6\u60e9\u7f5a (Weight Penalty)", "movement", HO_N(movement, weightSpeedPenalty), 0, 200, ScaleMode::Div100, static_cast<int>(p.movement.weightSpeedPenalty * 100), false});
+    reg.reg({"\u786c\u78b0\u649e\u8ddd\u79bb (Hard Collision)", "movement", HO_N(movement, hardCollisionRadius), 0, 50, ScaleMode::Multiply2, static_cast<int>(p.movement.hardCollisionRadius / 2.0f), false});
 
     // Group: Perception
-    reg.reg({"\u5206\u79bb\u534a\u5f84 (Sep Radius)", "perception", HO(separationRadius), 5,  100, ScaleMode::OneToOne, static_cast<int>(p.separationRadius), false});
-    reg.reg({"\u5bf9\u9f50\u534a\u5f84 (Ali Radius)", "perception", HO(alignmentRadius),  10, 200, ScaleMode::OneToOne, static_cast<int>(p.alignmentRadius),  false});
-    reg.reg({"\u805a\u96c6\u534a\u5f84 (Coh Radius)", "perception", HO(cohesionRadius),   10, 200, ScaleMode::OneToOne, static_cast<int>(p.cohesionRadius),   false,
-             [this](float) { m_glWidget->simulation().updateGrid(); }});  // cohRadius triggers grid rebuild
+    reg.reg({"\u5206\u79bb\u534a\u5f84 (Sep Radius)", "perception", HO_N(perception, separationRadius), 5,  100, ScaleMode::OneToOne, static_cast<int>(p.perception.separationRadius), false});
+    reg.reg({"\u5bf9\u9f50\u534a\u5f84 (Ali Radius)", "perception", HO_N(perception, alignmentRadius),  10, 200, ScaleMode::OneToOne, static_cast<int>(p.perception.alignmentRadius),  false});
+    reg.reg({"\u805a\u96c6\u534a\u5f84 (Coh Radius)", "perception", HO_N(perception, cohesionRadius),   10, 200, ScaleMode::OneToOne, static_cast<int>(p.perception.cohesionRadius),   false,
+             [this](float) { m_glWidget->simulation().updateGrid(); }});
 
     // Group: Boundary & Wander
-    reg.reg({"\u8fb9\u754c\u89c4\u907f (Boundary Avoid)", "boundary", HO(boundaryWeight), 0,  50,  ScaleMode::Div10,    static_cast<int>(p.boundaryWeight * 10),  false});
-    reg.reg({"\u8fb9\u754c\u8ddd\u79bb (Margin)",          "boundary", HO(boundaryMargin), 10, 300, ScaleMode::OneToOne,  static_cast<int>(p.boundaryMargin),        false});
-    reg.reg({"\u968f\u673a\u6e38\u8361 (Wander)",           "boundary", HO(wanderWeight),   0,  30,  ScaleMode::Div10,    static_cast<int>(p.wanderWeight * 10),    false});
+    reg.reg({"\u8fb9\u754c\u89c4\u907f (Boundary Avoid)", "boundary", HO_N(boundary, boundaryWeight), 0,  50,  ScaleMode::Div10,    static_cast<int>(p.boundary.boundaryWeight * 10),  false});
+    reg.reg({"\u8fb9\u754c\u8ddd\u79bb (Margin)",          "boundary", HO_N(boundary, boundaryMargin), 10, 300, ScaleMode::OneToOne,  static_cast<int>(p.boundary.boundaryMargin),        false});
+    reg.reg({"\u968f\u673a\u6e38\u8361 (Wander)",           "boundary", HO_N(boundary, wanderWeight),   0,  30,  ScaleMode::Div10,    static_cast<int>(p.boundary.wanderWeight * 10),    false});
 
     // Group: Foraging
-    reg.reg({"\u641c\u5bfb\u8303\u56f4 (Forage Range)",        "forage", HO(forageRange),            30,  400, ScaleMode::OneToOne,  static_cast<int>(p.forageRange),              false});
-    reg.reg({"\u89c5\u98df\u529b\u5ea6 (Forage Weight)",       "forage", HO(forageWeight),           0,   50,  ScaleMode::Div10,    static_cast<int>(p.forageWeight * 10),        false});
-    reg.reg({"\u9965\u997f\u9608\u503c (Hunger Threshold)",    "forage", HO(forageHungerThreshold),  10,  90,  ScaleMode::Div100,   static_cast<int>(p.forageHungerThreshold * 100), false});
+    reg.reg({"\u641c\u5bfb\u8303\u56f4 (Forage Range)",        "forage", HO_N(hunger, forageRange),            30,  400, ScaleMode::OneToOne,  static_cast<int>(p.hunger.forageRange),              false});
+    reg.reg({"\u89c5\u98df\u529b\u5ea6 (Forage Weight)",       "forage", HO_N(hunger, forageWeight),           0,   50,  ScaleMode::Div10,    static_cast<int>(p.hunger.forageWeight * 10),        false});
+    reg.reg({"\u9965\u997f\u9608\u503c (Hunger Threshold)",    "forage", HO_N(hunger, forageHungerThreshold),  10,  90,  ScaleMode::Div100,   static_cast<int>(p.hunger.forageHungerThreshold * 100), false});
 
     // Group: Reproduction
-    reg.reg({"\u6700\u5c11\u540e\u4ee3 (Min Offspring)",  "repro", HO(reproductionMinOffspring), 1,  5,    ScaleMode::OneToOne,  static_cast<int>(p.reproductionMinOffspring),                  false});
-    reg.reg({"\u6700\u591a\u540e\u4ee3 (Max Offspring)",  "repro", HO(reproductionMaxOffspring), 1,  10,   ScaleMode::OneToOne,  static_cast<int>(p.reproductionMaxOffspring),                  false});
-    reg.reg({"\u7fa4\u4f53\u4e0a\u9650 (Max Flock Size)", "repro", HO(maxFlockSize),             50, 5000, ScaleMode::OneToOne,  p.maxFlockSize,                              false});
-    reg.reg({"\u6700\u4f4e\u9971\u8179\u503c (Min Hunger)","repro",  HO(reproductionMinHunger),  40, 95,   ScaleMode::Div100,   static_cast<int>(p.reproductionMinHunger * 100), false});
-    reg.reg({"\u7e41\u6b96\u95f4\u9694/\u79d2 (Interval)","repro",   HO(reproductionInterval),   30, 300,  ScaleMode::OneToOne,  static_cast<int>(p.reproductionInterval),       false});
+    reg.reg({"\u6700\u5c11\u540e\u4ee3 (Min Offspring)",  "repro", HO_N(reproduction, reproductionMinOffspring), 1,  5,    ScaleMode::OneToOne,  static_cast<int>(p.reproduction.reproductionMinOffspring),                  false});
+    reg.reg({"\u6700\u591a\u540e\u4ee3 (Max Offspring)",  "repro", HO_N(reproduction, reproductionMaxOffspring), 1,  10,   ScaleMode::OneToOne,  static_cast<int>(p.reproduction.reproductionMaxOffspring),                  false});
+    reg.reg({"\u7fa4\u4f53\u4e0a\u9650 (Max Flock Size)", "repro", HO_N(reproduction, maxFlockSize),             50, 5000, ScaleMode::OneToOne,  p.reproduction.maxFlockSize,                              false});
+    reg.reg({"\u6700\u4f4e\u9971\u8179\u503c (Min Hunger)","repro",  HO_N(reproduction, reproductionMinHunger),  40, 95,   ScaleMode::Div100,   static_cast<int>(p.reproduction.reproductionMinHunger * 100), false});
+    reg.reg({"\u7e41\u6b96\u95f4\u9694/\u79d2 (Interval)","repro",   HO_N(reproduction, reproductionInterval),   30, 300,  ScaleMode::OneToOne,  static_cast<int>(p.reproduction.reproductionInterval),       false});
 
-    // ================================================================
-    // Register all PlantParams parameters
-    // ================================================================
+    // Group: Age & Lifecycle (Phase 1.1)
+    reg.reg({"\u6700\u5927\u5bff\u547d (Max Lifespan)",    "age", HO_N(age, maxLifespan),   100, 7200, ScaleMode::OneToOne, static_cast<int>(p.age.maxLifespan),  false});
+    reg.reg({"\u5e7c\u5e74\u671f (Juvenile Age)",          "age", HO_N(age, juvenileAge),    0,   600, ScaleMode::OneToOne, static_cast<int>(p.age.juvenileAge),  false});
+    reg.reg({"\u9752\u5e74\u671f (Young Age)",             "age", HO_N(age, youngAge),      10,  1200, ScaleMode::OneToOne, static_cast<int>(p.age.youngAge),    false});
+    reg.reg({"\u8001\u5e74\u671f (Elder Age)",             "age", HO_N(age, elderAge),      60,  6000, ScaleMode::OneToOne, static_cast<int>(p.age.elderAge),    false});
+
+    // Group: Body Size (Phase 1.2) -- age-stage visual size multipliers
+    reg.reg({"\u5e7c\u5e74\u4f53\u578b (Juvenile Size)", "bodysize", HO_N(age, ageSizeJuvenile), 10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeJuvenile * 100), false});
+    reg.reg({"\u9752\u5e74\u4f53\u578b (Young Size)",    "bodysize", HO_N(age, ageSizeYoung),    10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeYoung * 100),    false});
+    reg.reg({"\u6210\u5e74\u4f53\u578b (Adult Size)",    "bodysize", HO_N(age, ageSizeAdult),    10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeAdult * 100),    false});
+    reg.reg({"\u8001\u5e74\u4f53\u578b (Elder Size)",    "bodysize", HO_N(age, ageSizeElder),    10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeElder * 100),    false});
+
+    // Group: Fatigue (Phase 1.3)
+    reg.reg({"\u7d2f\u79ef\u901f\u7387 (Accum Rate)",    "fatigue", HO_N(fatigue, fatigueAccumRate),    1, 100, ScaleMode::Div1000, static_cast<int>(p.fatigue.fatigueAccumRate * 1000),    false});
+    reg.reg({"\u6062\u590d\u901f\u7387 (Recovery Rate)",  "fatigue", HO_N(fatigue, fatigueRecoveryRate), 10, 500, ScaleMode::Div1000, static_cast<int>(p.fatigue.fatigueRecoveryRate * 1000),  false});
+    reg.reg({"\u901f\u5ea6\u60e9\u7f5a (Speed Penalty)", "fatigue", HO_N(fatigue, fatigueSpeedPenalty),  0, 100, ScaleMode::Div100,  static_cast<int>(p.fatigue.fatigueSpeedPenalty * 100),   false});
+
+    // Group: Gender Dimorphism (Phase 1.4)
+    reg.reg({"\u96c4\u6027\u901f\u5ea6 (Male Speed)",  "gender", HO_N(gender, sexSpeedMale),   50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSpeedMale * 100),   false});
+    reg.reg({"\u96cc\u6027\u901f\u5ea6 (Female Speed)","gender", HO_N(gender, sexSpeedFemale), 50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSpeedFemale * 100), false});
+    reg.reg({"\u96c4\u6027\u4f53\u578b (Male Size)",   "gender", HO_N(gender, sexSizeMale),    50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSizeMale * 100),    false});
+    reg.reg({"\u96cc\u6027\u4f53\u578b (Female Size)", "gender", HO_N(gender, sexSizeFemale),  50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSizeFemale * 100),  false});
+
+    // Group: Pregnancy (Phase 1.5)
+    reg.reg({"\u598a\u5a20\u65f6\u957f (Duration)",          "pregnancy", HO_N(pregnancy, pregnancyDuration),   5,  120, ScaleMode::OneToOne, static_cast<int>(p.pregnancy.pregnancyDuration),   false});
+    reg.reg({"\u4ea7\u540e\u6062\u590d (Postpartum)",        "pregnancy", HO_N(pregnancy, postpartumRecovery), 10,  300, ScaleMode::OneToOne, static_cast<int>(p.pregnancy.postpartumRecovery), false});
+    reg.reg({"\u54fa\u4e73\u9971\u8179 (Nursing Boost)",     "pregnancy", HO_N(pregnancy, offspringHungerBoost), 0, 80, ScaleMode::Div100, static_cast<int>(p.pregnancy.offspringHungerBoost * 100), false});
+
+    // Group: Male Combat (Phase 2.1)
+    reg.reg({"\u5185\u6597\u534a\u5f84 (Combat Radius)",  "combat", HO_N(combat, combatRadius),       5,  150, ScaleMode::OneToOne, static_cast<int>(p.combat.combatRadius),       false});
+    reg.reg({"\u5185\u6597\u6982\u7387 (Probability)",    "combat", HO_N(combat, combatProbability),  5,  100, ScaleMode::Div100,  static_cast<int>(p.combat.combatProbability * 100), false});
+    reg.reg({"\u75b2\u52b3\u589e\u52a0 (Fatigue Gain)",   "combat", HO_N(combat, combatFatigueGain),  1,  50,  ScaleMode::Div100,  static_cast<int>(p.combat.combatFatigueGain * 100),  false});
+    reg.reg({"\u5185\u6597\u51b7\u5374 (Cooldown)",       "combat", HO_N(combat, combatCooldown),     1,  30,  ScaleMode::OneToOne, static_cast<int>(p.combat.combatCooldown),      false});
+
+    // Group: Hatred / Enmity (Phase 2.2)
+    reg.reg({"\u4ec7\u6068\u589e\u76ca (Gain per Kill)", "hatred", HO_N(hatred, hatredGainPerKill),       1,  80, ScaleMode::Div100,  static_cast<int>(p.hatred.hatredGainPerKill * 100),      false});
+    reg.reg({"\u4ec7\u6068\u8870\u51cf (Decay Rate)",   "hatred", HO_N(hatred, hatredDecayRate),        1,  20,  ScaleMode::Div100,  static_cast<int>(p.hatred.hatredDecayRate * 100),        false});
+    reg.reg({"\u9003\u8dd1\u8ddd\u79bb (Flee Radius)",    "hatred", HO_N(hatred, hatredFleeRadiusBoost), 1,  100, ScaleMode::Div10,   static_cast<int>(p.hatred.hatredFleeRadiusBoost * 10),   false});
+    reg.reg({"\u9003\u8dd1\u529b\u5ea6 (Flee Weight)",    "hatred", HO_N(hatred, hatredFleeWeightBoost), 1,  50,  ScaleMode::Div10,   static_cast<int>(p.hatred.hatredFleeWeightBoost * 10),   false});
+
+    // Group: Escape Strategy (Phase 2.3)
+    reg.reg({"\u9003\u8dd1\u7b56\u7565 (Strategy)",        "escape", HO_N(escape, escapeStrategy),     0,  3,   ScaleMode::OneToOne,  static_cast<int>(p.escape.escapeStrategy),   false});
+    reg.reg({"\u6df7\u5408\u5e45\u5ea6 (Mix Factor)",      "escape", HO_N(escape, escapeStrategyMix),  0,  100, ScaleMode::Div100,  static_cast<int>(p.escape.escapeStrategyMix * 100), false});
+    reg.reg({"\u4e4b\u5b57\u632f\u5e45 (Zigzag Amp)",      "escape", HO_N(escape, escapeZigzagAmp),   10,  100, ScaleMode::Div100,  static_cast<int>(p.escape.escapeZigzagAmp * 100), false});
+
+    // Group: Defensive Cooperation (Phase 2.4)
+    reg.reg({"\u9632\u5fa1\u534a\u5f84 (Defense Radius)",   "defense", HO_N(defense, defenseRadius),         50,  500, ScaleMode::OneToOne, static_cast<int>(p.defense.defenseRadius),         false});
+    reg.reg({"\u53cd\u51fb\u529b\u5ea6 (Response Weight)",   "defense", HO_N(defense, defenseResponseWeight), 5,   100, ScaleMode::Div100,  static_cast<int>(p.defense.defenseResponseWeight * 100),  false});
+    reg.reg({"\u7fa4\u4f53\u9608\u503c (Group Threshold)",   "defense", HO_N(defense, defenseGroupThreshold), 1,   10,  ScaleMode::OneToOne, static_cast<int>(p.defense.defenseGroupThreshold),   false});
+
+    // Group: Cohesion Dynamics (Phase 2.5)
+    reg.reg({"\u57fa\u7840\u6743\u91cd (Base Weight)",       "cohesionDyn", HO_N(cohesionDyn, cohesionBaseWeight),   10,  200, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionBaseWeight * 100),   false});
+    reg.reg({"\u5a01\u80c1\u589e\u76ca (Threat Boost)",      "cohesionDyn", HO_N(cohesionDyn, cohesionThreatBoost), 10,  400, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionThreatBoost * 100),  false});
+    reg.reg({"\u9965\u997f\u8870\u51cf (Hunger Decay)",      "cohesionDyn", HO_N(cohesionDyn, cohesionHungerDecay), 0,   100, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionHungerDecay * 100),   false});
+    reg.reg({"\u5bc6\u5ea6\u8870\u51cf (Density Decay)",     "cohesionDyn", HO_N(cohesionDyn, cohesionDensityDecay), 0,  100, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionDensityDecay * 100), false});
+
+    // Group: Health / Dodge / Damage (Phase 1.7)
+    reg.reg({"\u57fa\u7840\u95ea\u907f\u7387 (Dodge Base)",         "health", HO_N(health, dodgeChanceBase),  0,   80,  ScaleMode::Div100,  static_cast<int>(p.health.dodgeChanceBase * 100),  false});
+    reg.reg({"\u4f24\u5bb3\u7cfb\u6570 (Damage Multiplier)",       "health", HO_N(health, damageToHealth),   10,  100, ScaleMode::Div100,  static_cast<int>(p.health.damageToHealth * 100),   false});
+    reg.reg({"\u56de\u8840\u901f\u5ea6 (Health Regen)",            "health", HO_N(health, healthRegenRate),  0,   50,  ScaleMode::Div1000, static_cast<int>(p.health.healthRegenRate * 1000), false});
+    reg.reg({"\u521d\u59cb\u751f\u547d (Initial Health)",         "health", HO_N(health, healthInitial),    50,  100, ScaleMode::Div100,  static_cast<int>(p.health.healthInitial * 100),    false});
+
+    // Nest preference params (Phase 3.1)
+    reg.reg({"\u5de2\u7a74\u56de\u5f52\u6743\u91cd (Nest Return)",      "nestPref", HO_N(nestPref, nestReturnWeight),      0,  100, ScaleMode::Div100,  static_cast<int>(p.nestPref.nestReturnWeight * 100),    true});
+    reg.reg({"\u5de2\u7a74\u98df\u7269\u504f\u597d (Food Prefer)",      "nestPref", HO_N(nestPref, nestPreferFoodDensity), 0,  100, ScaleMode::Div100,  static_cast<int>(p.nestPref.nestPreferFoodDensity * 100), false});
+    reg.reg({"\u5de2\u7a74\u5b89\u5168\u504f\u597d (Safety Prefer)",    "nestPref", HO_N(nestPref, nestPreferSafety),      0,  100, ScaleMode::Div100,  static_cast<int>(p.nestPref.nestPreferSafety * 100),      false});
+    reg.reg({"\u5de2\u7a74\u9009\u5740\u8303\u56f4 (Selection Range)",  "nestPref", HO_N(nestPref, nestSelectionRange),    50, 500, ScaleMode::OneToOne, static_cast<int>(p.nestPref.nestSelectionRange),           false});
+
+    // Plant params
     reg.reg({"\u6700\u5927\u6570\u91cf (Max Plants)",          "plants", PO(maxPlants),       10,  500, ScaleMode::OneToOne,  static_cast<int>(pp.maxPlants),  false});
     reg.reg({"\u8fdb\u98df\u8303\u56f4 (Eat Range)",           "plants", PO(eatRange),        5,   100, ScaleMode::OneToOne,  static_cast<int>(pp.eatRange),      true});
+    reg.reg({"\u690d\u7269\u98df\u7269\u503c (Food Value)",     "plants", PO(plantFoodValue),  10,  100, ScaleMode::Div100,  static_cast<int>(pp.plantFoodValue * 100), true});
     reg.reg({"\u751f\u957f\u65f6\u95f4 (Growth Time)",         "plants", PO(growthTime),      10,  200, ScaleMode::OneToOne,  static_cast<int>(pp.growthTime),    true});
     reg.reg({"\u6269\u6563\u6982\u7387 (Spread Chance)",       "plants", PO(spreadChance),    0,   100, ScaleMode::Div1000,  static_cast<int>(pp.spreadChance * 1000), true});
     reg.reg({"\u6269\u6563\u8303\u56f4 (Spread Range)",        "plants", PO(spreadRange),     20,  300, ScaleMode::OneToOne,  static_cast<int>(pp.spreadRange),   true});
     reg.reg({"\u5b63\u8282\u957f\u5ea6 (Season Length)",       "plants", PO(seasonLength),    10,  300, ScaleMode::OneToOne,  static_cast<int>(pp.seasonLength),  true});
     reg.reg({"\u80a5\u6c83\u534a\u5f84 (Fertilize Radius)",    "plants", PO(fertilizeRadius), 20,  200, ScaleMode::OneToOne,  static_cast<int>(pp.fertilizeRadius), true});
     reg.reg({"\u80a5\u6c83\u589e\u5e45 (Fertilize Boost)",     "plants", PO(fertilizeBoost),  5,   80,  ScaleMode::Div100,   static_cast<int>(pp.fertilizeBoost * 100), true});
+    reg.reg({"\u627f\u8f7d\u538b\u529b (Carrying Pressure)",   "plants", PO(carryingPressure), 0,  100, ScaleMode::Div100,   static_cast<int>(pp.carryingPressure * 100), true});
+
+    // Global nest params (Phase 3.1)
+    const NestParams& np = sim.nestParams();
+    reg.reg({"\u521d\u59cb\u5de2\u7a74\u6570 (Initial Nests)",       "nest", NO(initialNests),      0,  50,  ScaleMode::OneToOne,  static_cast<int>(np.initialNests),    false});
+    reg.reg({"\u5de2\u7a74\u9886\u5730\u534a\u5f84 (Nest Radius)",   "nest", NO(nestRadius),        50, 500, ScaleMode::OneToOne,  static_cast<int>(np.nestRadius),      true});
+    reg.reg({"\u56de\u8840\u52a0\u6210 (Health Boost)",              "nest", NO(nestHealthBoost),   100,500, ScaleMode::Div100,   static_cast<int>(np.nestHealthBoost * 100), true});
+    reg.reg({"\u98df\u7269\u5b58\u50a8\u901f\u7387 (Food Storage)",  "nest", NO(nestFoodStorageRate),0,  20,  ScaleMode::Div1000,  static_cast<int>(np.nestFoodStorageRate * 1000), true});
+    reg.reg({"\u4e89\u593a\u65f6\u957f (Contest Duration)",          "nest", NO(contestDuration),   5,  60,  ScaleMode::OneToOne,  static_cast<int>(np.contestDuration),  false});
+    reg.reg({"\u5b88\u536b\u95e8\u69db (Defense Threshold)",         "nest", NO(defenseThreshold),  1,  20,  ScaleMode::OneToOne,  static_cast<int>(np.defenseThreshold), false});
 
     // ================================================================
-    // Build GroupBoxes via registry
+    // Build tabs
     // ================================================================
+    // Tab 0: Behavior (Reynolds + Movement + Perception)
+    {
+        auto* lay = makeTab("Behavior");
+        auto* box1 = reg.buildGroup("reynolds", groupStyle, &p, &pp, this);
+        box1->setTitle("Reynolds \u7fa4\u4f53\u89c4\u5219");
+        lay->addWidget(box1);
 
-    struct GroupInfo {
-        const char* key;
-        const char* title;
-    };
-    const GroupInfo groups[] = {
-        {"hunger",      "\u9965\u997f\u4e0e\u9971\u8179 (Hunger & Satiety)"},
-        {"predation",   "\u6355\u730e\u4e0e\u9003\u79bb (Predation & Escape)"},
-        {"interflock",  "\u7fa4\u95f4\u884c\u4e3a (Inter-Flock)"},
-        {"reynolds",    "Reynolds \u7fa4\u4f53\u89c4\u5219"},
-        {"movement",    "\u79fb\u52a8\u4e0e\u78b0\u649e (Movement \u0026 Collision)"},
-        {"perception",  "\u611f\u77e5\u534a\u5f84 (Perception)"},
-        {"boundary",    "\u8fb9\u754c\u4e0e\u6e38\u8361 (Boundary & Wander)"},
-    };
+        auto* box2 = reg.buildGroup("movement", groupStyle, &p, &pp, this);
+        box2->setTitle("\u79fb\u52a8\u4e0e\u78b0\u649e (Movement \u0026 Collision)");
+        lay->addWidget(box2);
 
-    for (auto& g : groups) {
-        auto* box = reg.buildGroup(g.key, groupStyle, &p, &pp, this);
-        box->setTitle(QString::fromUtf8(g.title));
-        mainLayout->addWidget(box);
+        auto* box3 = reg.buildGroup("perception", groupStyle, &p, &pp, this);
+        box3->setTitle("\u611f\u77e5\u534a\u5f84 (Perception)");
+        lay->addWidget(box3);
+
+        // Invert hunger-speed checkbox (attached to movement group)
+        m_invertHungerCheck = new QCheckBox("\u53cd\u8f6c\u9965\u997f\u901f\u5ea6\u66f2\u7ebf (Invert Hunger-Speed)");
+        m_invertHungerCheck->setStyleSheet("color: #888; font-size: 11px;");
+        connect(m_invertHungerCheck, &QCheckBox::toggled, this, &MainWindow::onToggleInvertHunger);
+        lay->addWidget(m_invertHungerCheck);
+
+        lay->addStretch();
     }
 
-    // ---- Invert hunger-speed checkbox (Movement group, non-registry: bool) ----
+    // Tab 1: Interaction (Predation + Inter-Flock + Foraging)
     {
-        auto* moveBox = reg.groupBox("movement");
-        if (moveBox) {
-            m_invertHungerCheck = new QCheckBox("\u53cd\u8f6c\u9965\u997f\u901f\u5ea6\u66f2\u7ebf (Invert Hunger-Speed)");
-            m_invertHungerCheck->setStyleSheet("color: #888; font-size: 11px;");
-            connect(m_invertHungerCheck, &QCheckBox::toggled, this, &MainWindow::onToggleInvertHunger);
-            qobject_cast<QVBoxLayout*>(moveBox->layout())->addWidget(m_invertHungerCheck);
-        }
+        auto* lay = makeTab("Interaction");
+        auto* box1 = reg.buildGroup("predation", groupStyle, &p, &pp, this);
+        box1->setTitle("\u6355\u730e\u4e0e\u9003\u79bb (Predation & Escape)");
+        lay->addWidget(box1);
+
+        auto* box2 = reg.buildGroup("interflock", groupStyle, &p, &pp, this);
+        box2->setTitle("\u7fa4\u95f4\u884c\u4e3a (Inter-Flock)");
+        lay->addWidget(box2);
+
+        auto* box3 = reg.buildGroup("forage", groupStyle, &p, &pp, this);
+        box3->setTitle("\u89c5\u98df\u884c\u4e3a (Foraging)");
+        lay->addWidget(box3);
+
+        lay->addStretch();
     }
 
-    // ================================================================
-    // Group: Flock Relationships (dynamic, non-registry)
-    // ================================================================
+    // Tab 2: Lifecycle (Hunger + Reproduction + Age + Body Size)
+    // Phase 1 will add Fatigue, Gender here
     {
-        m_relGroup = new QGroupBox("\u7fa4\u4f53\u5173\u7cfb (Flock Relations)");
-        m_relGroup->setStyleSheet(groupStyle);
-        m_relGroup->setCheckable(true);
-        m_relGroup->setChecked(true);
-        m_relContainer = new QWidget();
-        m_relVLayout = new QVBoxLayout(m_relContainer);
-        m_relVLayout->setContentsMargins(6, 2, 6, 6);
-        m_relVLayout->setSpacing(1);
-        m_relGroup->setLayout(new QVBoxLayout());
-        m_relGroup->layout()->setContentsMargins(0, 0, 0, 0);
-        m_relGroup->layout()->addWidget(m_relContainer);
-        mainLayout->addWidget(m_relGroup);
-        rebuildRelationshipUI();
+        auto* lay = makeTab("Lifecycle");
+        auto* box1 = reg.buildGroup("hunger", groupStyle, &p, &pp, this);
+        box1->setTitle("\u9965\u997f\u4e0e\u9971\u8179 (Hunger & Satiety)");
+        lay->addWidget(box1);
+
+        auto* box2 = reg.buildGroup("repro", groupStyle, &p, &pp, this);
+        box2->setTitle("\u7fa4\u4f53\u7e41\u884d (Reproduction)");
+        lay->addWidget(box2);
+
+        auto* boxPreg = reg.buildGroup("pregnancy", groupStyle, &p, &pp, this);
+        boxPreg->setTitle("\u598a\u5a20\u4e0e\u54fa\u4e73 (Pregnancy & Nursing)");
+        lay->addWidget(boxPreg);
+
+        auto* box3 = reg.buildGroup("age", groupStyle, &p, &pp, this);
+        box3->setTitle("\u5e74\u9f84\u4e0e\u5bff\u547d (Age & Lifespan)");
+        lay->addWidget(box3);
+
+        auto* box4 = reg.buildGroup("bodysize", groupStyle, &p, &pp, this);
+        box4->setTitle("\u4f53\u578b\u5927\u5c0f (Body Size)");
+        lay->addWidget(box4);
+
+        auto* box5 = reg.buildGroup("fatigue", groupStyle, &p, &pp, this);
+        box5->setTitle("\u75b2\u52b3\u7cfb\u7edf (Fatigue)");
+        lay->addWidget(box5);
+
+        auto* box6 = reg.buildGroup("gender", groupStyle, &p, &pp, this);
+        box6->setTitle("\u6027\u522b\u4e8c\u6001 (Gender Dimorphism)");
+        lay->addWidget(box6);
+
+        auto* boxCombat = reg.buildGroup("combat", groupStyle, &p, &pp, this);
+        boxCombat->setTitle("\u96c4\u6027\u5185\u6597 (Male Combat)");
+        lay->addWidget(boxCombat);
+
+        auto* boxHatred = reg.buildGroup("hatred", groupStyle, &p, &pp, this);
+        boxHatred->setTitle("\u4ec7\u6068\u7cfb\u7edf (Hatred / Enmity)");
+        lay->addWidget(boxHatred);
+
+        auto* boxEscape = reg.buildGroup("escape", groupStyle, &p, &pp, this);
+        boxEscape->setTitle("\u9003\u8dd1\u7b56\u7565 (Escape Strategy)");
+        lay->addWidget(boxEscape);
+
+        auto* boxDefense = reg.buildGroup("defense", groupStyle, &p, &pp, this);
+        boxDefense->setTitle("\u9632\u5fa1\u534f\u4f5c (Defensive Cooperation)");
+        lay->addWidget(boxDefense);
+
+        auto* boxCohDyn = reg.buildGroup("cohesionDyn", groupStyle, &p, &pp, this);
+        boxCohDyn->setTitle("\u51dd\u805a\u529b\u52a8\u6001 (Cohesion Dynamics)");
+        lay->addWidget(boxCohDyn);
+
+        auto* boxHealth = reg.buildGroup("health", groupStyle, &p, &pp, this);
+        boxHealth->setTitle("\u751f\u547d\u4e0e\u6218\u6597 (Health & Combat)");
+        lay->addWidget(boxHealth);
+
+        auto* boxNestPref = reg.buildGroup("nestPref", groupStyle, &p, &pp, this);
+        boxNestPref->setTitle("\u5de2\u7a74\u504f\u597d (Nest Preference)");
+        lay->addWidget(boxNestPref);
+
+        lay->addStretch();
     }
 
-    // ================================================================
-    // Group: Plant Ecology (from registry + season label)
-    // ================================================================
+    // Tab 3: Appearance (Colors + Sprite + Size)
     {
-        auto* box = reg.buildGroup("plants", groupStyle, &p, &pp, this);
-        box->setTitle("\u690d\u7269\u751f\u6001 (Plant Ecology)");
-
-        // Season label (handled outside registry: dynamic, non-param)
-        m_seasonLabel = new QLabel("\u5b63\u8282: \u6625\u5b63 (Spring)");
-        m_seasonLabel->setStyleSheet("color: #80c080; font-size: 12px; font-weight: bold; padding: 4px 0 0 0;");
-        qobject_cast<QVBoxLayout*>(box->layout())->addWidget(m_seasonLabel);
-
-        mainLayout->addWidget(box);
-    }
-
-    // ================================================================
-    // Group: Foraging (from registry)
-    // ================================================================
-    {
-        auto* box = reg.buildGroup("forage", groupStyle, &p, &pp, this);
-        box->setTitle("\u89c5\u98df\u884c\u4e3a (Foraging)");
-        mainLayout->addWidget(box);
-    }
-
-    // ================================================================
-    // Group: Reproduction (from registry)
-    // ================================================================
-    {
-        auto* box = reg.buildGroup("repro", groupStyle, &p, &pp, this);
-        box->setTitle("\u7fa4\u4f53\u7e41\u884d (Reproduction)");
-        mainLayout->addWidget(box);
-    }
-
-    // ================================================================
-    // Group: Appearance (per-flock, non-registry: color buttons + checkbox)
-    // ================================================================
-    {
+        auto* lay = makeTab("Appearance");
         m_appearanceGroup = new QGroupBox("\u5916\u89c2 (Appearance)");
         m_appearanceGroup->setStyleSheet(groupStyle);
         m_appearanceGroup->setCheckable(true);
@@ -393,7 +527,7 @@ void MainWindow::setupUI()
             gLayout->addLayout(row);
         }
 
-        // Male color button
+        // Male color
         {
             auto* row = new QHBoxLayout();
             auto* lbl = new QLabel("Male Color:");
@@ -411,7 +545,7 @@ void MainWindow::setupUI()
             gLayout->addLayout(row);
         }
 
-        // Female color button
+        // Female color
         {
             auto* row = new QHBoxLayout();
             auto* lbl = new QLabel("Female Color:");
@@ -429,7 +563,6 @@ void MainWindow::setupUI()
             gLayout->addLayout(row);
         }
 
-        // Sex colors checkbox
         m_sexColorsCheck = new QCheckBox("Enable Sex Colors");
         m_sexColorsCheck->setStyleSheet("color: #888; font-size: 11px;");
         connect(m_sexColorsCheck, &QCheckBox::toggled, this, &MainWindow::onToggleSexColors);
@@ -455,7 +588,7 @@ void MainWindow::setupUI()
             gLayout->addLayout(row);
         }
 
-        // Import + Refresh buttons
+        // Import + Refresh
         {
             auto* row = new QHBoxLayout();
             row->addStretch();
@@ -479,7 +612,6 @@ void MainWindow::setupUI()
             gLayout->addLayout(row);
         }
 
-        // Upright sprite toggle
         m_uprightCheck = new QCheckBox("Upright sprite (mirror instead of 180-rotate)");
         m_uprightCheck->setToolTip(
             "When ON: sprite always stays upright, mirrors horizontally when moving left.\n"
@@ -487,26 +619,168 @@ void MainWindow::setupUI()
         connect(m_uprightCheck, &QCheckBox::toggled, this, &MainWindow::onToggleUpright);
         gLayout->addWidget(m_uprightCheck);
 
-        mainLayout->addWidget(m_appearanceGroup);
+        lay->addWidget(m_appearanceGroup);
+
+        // Sprite scale slider (global rendering setting)
+        auto* spriteScaleLabel = new QLabel("\u7cbe\u7075\u56fe\u7f29\u653e (Sprite Scale)");
+        spriteScaleLabel->setStyleSheet("color: #888; font-size: 11px;");
+        lay->addWidget(spriteScaleLabel);
+
+        auto* spriteScaleRow = new QHBoxLayout();
+        m_spriteScaleSlider = new QSlider(Qt::Horizontal);
+        m_spriteScaleSlider->setRange(2, 100);
+        m_spriteScaleSlider->setSingleStep(1);
+        m_spriteScaleSlider->setPageStep(10);
+        m_spriteScaleSlider->setValue(2);
+        m_spriteScaleSlider->setStyleSheet(
+            "QSlider::groove:horizontal { background: #3a3a3a; height: 4px; border-radius: 2px; }"
+            "QSlider::handle:horizontal { background: #666; width: 10px; margin: -3px 0; "
+            "  border-radius: 3px; }"
+            "QSlider::handle:horizontal:hover { background: #888; }");
+        m_spriteScaleSlider->setToolTip("2x");
+        connect(m_spriteScaleSlider, &QSlider::valueChanged, this, &MainWindow::onSpriteScaleChanged);
+        spriteScaleRow->addWidget(m_spriteScaleSlider);
+        m_spriteScaleLabel = new QLabel("2");
+        m_spriteScaleLabel->setStyleSheet("color: #aaa; font-size: 11px; min-width: 30px;");
+        m_spriteScaleLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        spriteScaleRow->addWidget(m_spriteScaleLabel);
+        lay->addLayout(spriteScaleRow);
+
+        lay->addStretch();
     }
 
-    mainLayout->addStretch();
+    // Tab 4: Relations (inter-flock relationship matrix)
+    {
+        auto* lay = makeTab("Relations");
+        m_relGroup = new QGroupBox("\u7fa4\u4f53\u5173\u7cfb (Flock Relations)");
+        m_relGroup->setStyleSheet(groupStyle);
+        m_relGroup->setCheckable(true);
+        m_relGroup->setChecked(true);
+        m_relContainer = new QWidget();
+        m_relVLayout = new QVBoxLayout(m_relContainer);
+        m_relVLayout->setContentsMargins(6, 2, 6, 6);
+        m_relVLayout->setSpacing(1);
+        m_relGroup->setLayout(new QVBoxLayout());
+        m_relGroup->layout()->setContentsMargins(0, 0, 0, 0);
+        m_relGroup->layout()->addWidget(m_relContainer);
+        lay->addWidget(m_relGroup);
+        lay->addStretch();
+        rebuildRelationshipUI();
+    }
 
-    scroll->setWidget(dock);
-    scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // Tab 5: World (Boundary + Plants + Global)
+    {
+        auto* lay = makeTab("World");
 
+        auto* box1 = reg.buildGroup("boundary", groupStyle, &p, &pp, this);
+        box1->setTitle("\u8fb9\u754c\u4e0e\u6e38\u8361 (Boundary & Wander)");
+        lay->addWidget(box1);
+
+        // Boundary mode selector (global, non-registry)
+        {
+            auto* bmRow = new QHBoxLayout();
+            auto* bmLabel = new QLabel("Boundary Mode:");
+            bmLabel->setStyleSheet("color: #888; font-size: 11px;");
+            bmRow->addWidget(bmLabel);
+            m_boundaryCombo = new QComboBox();
+            m_boundaryCombo->addItem("Hybrid (Soft + Wrap)", static_cast<int>(BoundaryMode::Hybrid));
+            m_boundaryCombo->addItem("Torus (Wrap only)",   static_cast<int>(BoundaryMode::Torus));
+            m_boundaryCombo->addItem("SoftWall (Repel only)", static_cast<int>(BoundaryMode::SoftWall));
+            m_boundaryCombo->addItem("HardWall (Bounce)",    static_cast<int>(BoundaryMode::HardWall));
+            m_boundaryCombo->setCurrentIndex(static_cast<int>(sim.globalParams().boundaryMode));
+            m_boundaryCombo->setToolTip("Boundary behavior for all boids");
+            m_boundaryCombo->setStyleSheet("color: #aaa; font-size: 11px; background: #3a3a3a;");
+            connect(m_boundaryCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                    this, [this](int idx) {
+                auto& s = m_glWidget->simulation();
+                s.globalParams().boundaryMode = static_cast<BoundaryMode>(idx);
+            });
+            bmRow->addWidget(m_boundaryCombo);
+            lay->addLayout(bmRow);
+        }
+
+        // Hunger flash toggle
+        m_globalHungerFlashCheck = new QCheckBox("\u9965\u997f\u95ea\u70c1 (Hunger Flash)");
+        m_globalHungerFlashCheck->setStyleSheet("color: #888; font-size: 11px;");
+        m_globalHungerFlashCheck->setToolTip("Global: boids flash red when starving");
+        m_globalHungerFlashCheck->setChecked(sim.globalParams().hungerFlashEnabled);
+        connect(m_globalHungerFlashCheck, &QCheckBox::toggled, this, &MainWindow::onToggleHungerFlash);
+        lay->addWidget(m_globalHungerFlashCheck);
+
+        lay->addSpacing(6);
+
+        // Plants
+        auto* box2 = reg.buildGroup("plants", groupStyle, &p, &pp, this);
+        box2->setTitle("\u690d\u7269\u751f\u6001 (Plant Ecology)");
+        lay->addWidget(box2);
+
+        // Nest global params (Phase 3.1)
+        auto* boxNest = reg.buildGroup("nest", groupStyle, &p, &pp, this);
+        boxNest->setTitle("\u5de2\u7a74\u7cfb\u7edf (Nest System)");
+        lay->addWidget(boxNest);
+
+        // Season label
+        m_seasonLabel = new QLabel("\u5b63\u8282: \u6625\u5b63 (Spring)");
+        m_seasonLabel->setStyleSheet("color: #80c080; font-size: 12px; font-weight: bold; padding: 4px 0 0 0;");
+        lay->addWidget(m_seasonLabel);
+
+        // Global flock cap
+        auto* capLabel = new QLabel("\u7fa4\u4f53\u4e0a\u9650 (Flock Cap)");
+        capLabel->setStyleSheet("color: #888; font-size: 11px;");
+        lay->addWidget(capLabel);
+
+        auto* capRow = new QHBoxLayout();
+        m_globalCapSlider = new QSlider(Qt::Horizontal);
+        m_globalCapSlider->setRange(100, 10000);
+        m_globalCapSlider->setValue(sim.maxBoids());
+        m_globalCapSlider->setStyleSheet("QSlider::groove:horizontal { height: 4px; background: #555; border-radius: 2px; }"
+            "QSlider::handle:horizontal { width: 10px; height: 14px; background: #888; border-radius: 3px; margin: -5px 0; }");
+        connect(m_globalCapSlider, &QSlider::valueChanged, this, [this](int v) {
+            m_glWidget->simulation().setGlobalFlockCap(v);
+        });
+        capRow->addWidget(m_globalCapSlider);
+        m_globalCapValueLabel = new QLabel(QString::number(sim.maxBoids()));
+        m_globalCapValueLabel->setStyleSheet("color: #aaa; font-size: 11px; font-weight: bold; min-width: 40px;");
+        m_globalCapValueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        connect(m_globalCapSlider, &QSlider::valueChanged, this, [this](int v) {
+            m_globalCapValueLabel->setText(QString::number(v));
+        });
+        capRow->addWidget(m_globalCapValueLabel);
+        lay->addLayout(capRow);
+
+        // Boid count display
+        auto* countLabel = new QLabel("Boids: 0");
+        countLabel->setStyleSheet("color: #666; font-size: 10px;");
+        countLabel->setObjectName("globalBoidCount");
+        lay->addWidget(countLabel);
+
+        lay->addStretch();
+    }
+
+    // ================================================================
+    // Active flock indicator (above tabs, always visible)
+    // ================================================================
+    auto* mainWidget = new QWidget();
+    auto* mainLayout = new QVBoxLayout(mainWidget);
+    mainLayout->setContentsMargins(6, 4, 6, 4);
+    mainLayout->setSpacing(4);
+
+    m_flockLabel = new QLabel("\u5f53\u524d\u7fa4\u4f53: Flock A");
+    m_flockLabel->setStyleSheet("font-weight: bold; color: #aaa; padding: 4px;");
+    mainLayout->addWidget(m_flockLabel);
+    mainLayout->addWidget(tabWidget);
+
+    // Dock widget wrapping everything
     auto* flockSettingsDock = new QDockWidget("\u7fa4\u4f53\u53c2\u6570 (Flock Settings)", this);
-    flockSettingsDock->setWidget(scroll);
+    flockSettingsDock->setWidget(mainWidget);
     flockSettingsDock->setObjectName("FlockSettingsDock");
     addDockWidget(Qt::RightDockWidgetArea, flockSettingsDock);
 
-    // ---- Independent docks: global settings + statistics ----
-    setupGlobalDock();
+    // Stats dock only (global settings merged into World tab)
     setupStatsDock();
 
     // ================================================================
-    // Connect all registry sliders: write param on change
+    // Connect all registry sliders
     // ================================================================
     reg.connectAll([this](const ParamDef* def, float val) {
         auto& sim = m_glWidget->simulation();
@@ -517,9 +791,9 @@ void MainWindow::setupUI()
         if (def->onChanged) def->onChanged(val);
     });
 
-    // Defer sprite loading until GL context is ready (after first paint)
+    // Defer sprite loading until GL context is ready
     QTimer::singleShot(100, this, [this]() { initSprites(); });
-  }
+}
 
 void MainWindow::refreshSliders()
 {
@@ -554,98 +828,6 @@ void MainWindow::refreshSliders()
             }
         }
     }
-}
-
-// ---- Global Settings Dock (independent, draggable) ----
-void MainWindow::setupGlobalDock()
-{
-    auto* content = new QWidget();
-    auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(6, 4, 6, 6);
-    layout->setSpacing(4);
-
-    auto& sim = m_glWidget->simulation();
-
-    m_wrapBoundaryCheck = new QCheckBox("\u5faa\u73af\u8fb9\u754c (Wrap Boundary)");
-    m_wrapBoundaryCheck->setStyleSheet("color: #888; font-size: 11px;");
-    m_wrapBoundaryCheck->setToolTip("ON = \u74b0\u9762\u62d3\u64b2 (\u5f9e\u5de6\u908a\u51fa\u53bb\u5f9e\u53f3\u908a\u56de\u4f86)\nOFF = \u786c\u78b0\u649e\u7246\u58c1 (\u53cd\u5f48\u56de\u4f86)");
-    m_wrapBoundaryCheck->setChecked(sim.globalParams().wrapBoundary);
-    connect(m_wrapBoundaryCheck, &QCheckBox::toggled, this, &MainWindow::onToggleWrapBoundary);
-    layout->addWidget(m_wrapBoundaryCheck);
-
-    m_globalHungerFlashCheck = new QCheckBox("\u9965\u997f\u95ea\u70c1 (Hunger Flash)");
-    m_globalHungerFlashCheck->setStyleSheet("color: #888; font-size: 11px;");
-    m_globalHungerFlashCheck->setToolTip("\u5168\u5c40\u63a7\u5236: \u9965\u997f\u65f6 boid \u662f\u5426\u7ea2\u8272\u95ea\u70c1");
-    m_globalHungerFlashCheck->setChecked(sim.globalParams().hungerFlashEnabled);
-    connect(m_globalHungerFlashCheck, &QCheckBox::toggled, this, &MainWindow::onToggleHungerFlash);
-    layout->addWidget(m_globalHungerFlashCheck);
-
-    layout->addSpacing(8);
-
-    // Global flock cap slider (batch-set maxFlockSize for all flocks)
-    auto* capLabel = new QLabel("\u7fa4\u4f53\u4e0a\u9650 (Flock Cap)");
-    capLabel->setStyleSheet("color: #888; font-size: 11px;");
-    layout->addWidget(capLabel);
-
-    auto* capRow = new QHBoxLayout();
-    m_globalFlockCapSlider = new QSlider(Qt::Horizontal);
-    m_globalFlockCapSlider->setRange(10, 2000);
-    m_globalFlockCapSlider->setSingleStep(10);
-    m_globalFlockCapSlider->setPageStep(100);
-    m_globalFlockCapSlider->setStyleSheet(
-        "QSlider::groove:horizontal { background: #3a3a3a; height: 4px; border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: #666; width: 10px; margin: -3px 0; "
-        "  border-radius: 3px; }"
-        "QSlider::handle:horizontal:hover { background: #888; }");
-    int initCap = sim.flockParams(sim.activeFlock()).maxFlockSize;
-    m_globalFlockCapSlider->setValue(initCap);
-    m_globalFlockCapSlider->setToolTip(QString("%1 \u4e2a").arg(initCap));
-    connect(m_globalFlockCapSlider, &QSlider::valueChanged, this, &MainWindow::onGlobalFlockCapChanged);
-    capRow->addWidget(m_globalFlockCapSlider);
-
-    m_globalFlockCapLabel = new QLabel(QString("%1").arg(initCap));
-    m_globalFlockCapLabel->setStyleSheet("color: #aaa; font-size: 11px; min-width: 30px;");
-    m_globalFlockCapLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    capRow->addWidget(m_globalFlockCapLabel);
-
-    layout->addLayout(capRow);
-
-    layout->addSpacing(8);
-
-    // Sprite scale slider (2x - 100x, multiplies rendered size of sprited boids)
-    auto* spriteScaleLabel = new QLabel("\u7cbe\u7075\u56fe\u7f29\u653e (Sprite Scale)");
-    spriteScaleLabel->setStyleSheet("color: #888; font-size: 11px;");
-    layout->addWidget(spriteScaleLabel);
-
-    auto* spriteScaleRow = new QHBoxLayout();
-    m_spriteScaleSlider = new QSlider(Qt::Horizontal);
-    m_spriteScaleSlider->setRange(2, 100);
-    m_spriteScaleSlider->setSingleStep(1);
-    m_spriteScaleSlider->setPageStep(10);
-    m_spriteScaleSlider->setValue(2);
-    m_spriteScaleSlider->setStyleSheet(
-        "QSlider::groove:horizontal { background: #3a3a3a; height: 4px; border-radius: 2px; }"
-        "QSlider::handle:horizontal { background: #666; width: 10px; margin: -3px 0; "
-        "  border-radius: 3px; }"
-        "QSlider::handle:horizontal:hover { background: #888; }");
-    m_spriteScaleSlider->setToolTip("2x");
-    connect(m_spriteScaleSlider, &QSlider::valueChanged, this, &MainWindow::onSpriteScaleChanged);
-    spriteScaleRow->addWidget(m_spriteScaleSlider);
-
-    m_spriteScaleLabel = new QLabel("2");
-    m_spriteScaleLabel->setStyleSheet("color: #aaa; font-size: 11px; min-width: 30px;");
-    m_spriteScaleLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    spriteScaleRow->addWidget(m_spriteScaleLabel);
-
-    layout->addLayout(spriteScaleRow);
-
-    layout->addStretch();
-
-    auto* dock = new QDockWidget("\u5168\u5c40\u63a7\u5236 (Global Settings)", this);
-    dock->setWidget(content);
-    dock->setObjectName("GlobalSettingsDock");
-    dock->setMinimumWidth(180);
-    addDockWidget(Qt::RightDockWidgetArea, dock);
 }
 
 // ---- Statistics Dock (independent, draggable) ----
@@ -726,7 +908,7 @@ void MainWindow::refreshStatsPanel()
     int total = 0;
     for (int f = 0; f < nf && f < static_cast<int>(m_statsFlockLabels.size()); ++f) {
         int cnt = stats[f].count;
-        int cap = sim.flockParams(f).maxFlockSize;
+        int cap = sim.flockParams(f).reproduction.maxFlockSize;
         total += cnt;
         const float* fc = sim.flockColor(f);
         QString color = QString("rgb(%1,%2,%3)")
@@ -869,10 +1051,10 @@ void MainWindow::onChangeFlockColor(int id)
     auto& sim = m_glWidget->simulation();
     if (id < 0 || id >= sim.flockCount()) return;
     auto& fp = sim.params();
-    pickColor(m_flockColorBtn, &fp.maleColorR, &fp.maleColorG, &fp.maleColorB);
+    pickColor(m_flockColorBtn, &fp.appearance.maleColorR, &fp.appearance.maleColorG, &fp.appearance.maleColorB);
     // Sync flock rendering colors
     auto* fc = const_cast<float*>(sim.flockColor(id));
-    if (fc) { fc[0] = fp.maleColorR; fc[1] = fp.maleColorG; fc[2] = fp.maleColorB; }
+    if (fc) { fc[0] = fp.appearance.maleColorR; fc[1] = fp.appearance.maleColorG; fc[2] = fp.appearance.maleColorB; }
 }
 
 void MainWindow::onChangeMaleColor(int id)
@@ -880,7 +1062,7 @@ void MainWindow::onChangeMaleColor(int id)
     auto& sim = m_glWidget->simulation();
     if (id < 0 || id >= sim.flockCount()) return;
     auto& fp = sim.params();
-    pickColor(m_maleColorBtn, &fp.maleColorR, &fp.maleColorG, &fp.maleColorB);
+    pickColor(m_maleColorBtn, &fp.appearance.maleColorR, &fp.appearance.maleColorG, &fp.appearance.maleColorB);
 }
 
 void MainWindow::onChangeFemaleColor(int id)
@@ -888,27 +1070,21 @@ void MainWindow::onChangeFemaleColor(int id)
     auto& sim = m_glWidget->simulation();
     if (id < 0 || id >= sim.flockCount()) return;
     auto& fp = sim.params();
-    pickColor(m_femaleColorBtn, &fp.femaleColorR, &fp.femaleColorG, &fp.femaleColorB);
+    pickColor(m_femaleColorBtn, &fp.appearance.femaleColorR, &fp.appearance.femaleColorG, &fp.appearance.femaleColorB);
 }
 
 void MainWindow::onToggleSexColors(bool checked)
 {
     auto& sim = m_glWidget->simulation();
-    sim.params().useSexColors = checked;
+    sim.params().appearance.useSexColors = checked;
     sim.saveCurrentParams();
 }
 
 void MainWindow::onToggleInvertHunger(bool checked)
 {
     auto& sim = m_glWidget->simulation();
-    sim.params().invertHungerSpeed = checked;
+    sim.params().hunger.invertHungerSpeed = checked;
     sim.saveCurrentParams();
-}
-
-void MainWindow::onToggleWrapBoundary(bool checked)
-{
-    auto& sim = m_glWidget->simulation();
-    sim.globalParams().wrapBoundary = checked;
 }
 
 void MainWindow::onToggleHungerFlash(bool checked)
@@ -919,12 +1095,9 @@ void MainWindow::onToggleHungerFlash(bool checked)
 
 void MainWindow::onGlobalFlockCapChanged(int value)
 {
-    auto& sim = m_glWidget->simulation();
-    sim.setGlobalFlockCap(value);
-    m_globalFlockCapSlider->setToolTip(QString("%1 \u4e2a").arg(value));
-    m_globalFlockCapLabel->setText(QString("%1").arg(value));
-    // Sync the per-flock ParameterRegistry slider too (if active flock params changed)
-    refreshSliders();
+    // NOTE: maxFlockSize is now per-flock (in Reproduction group via ParamRegistry).
+    // This slot retained as no-op for backward compatibility.
+    (void)value;
 }
 
 void MainWindow::onSpriteScaleChanged(int value)
@@ -979,7 +1152,7 @@ void MainWindow::refreshSpriteCombo()
 
     // Restore selection for current flock
     if (af >= 0 && af < sim.flockCount()) {
-        QString currentSprite = QString::fromStdString(sim.flockParams(af).spriteName);
+        QString currentSprite = QString::fromStdString(sim.flockParams(af).appearance.spriteName);
         int idx = m_spriteCombo->findData(currentSprite);
         if (idx >= 0)
             m_spriteCombo->setCurrentIndex(idx);
@@ -995,7 +1168,7 @@ void MainWindow::onSpriteChanged(int index)
     if (!m_spriteCombo || index < 0) return;
     auto& sim = m_glWidget->simulation();
     QString name = m_spriteCombo->itemData(index).toString();
-    sim.params().spriteName = name.toStdString();
+    sim.params().appearance.spriteName = name.toStdString();
     sim.saveCurrentParams();
 }
 
@@ -1051,7 +1224,7 @@ void MainWindow::onRefreshSprites()
 void MainWindow::onToggleUpright(bool checked)
 {
     auto& sim = m_glWidget->simulation();
-    sim.params().uprightSprite = checked;
+    sim.params().appearance.uprightSprite = checked;
     sim.saveCurrentParams();
 }
 
@@ -1063,7 +1236,7 @@ void MainWindow::onSpawn()
     int spawned = sim.spawnRandom(requested);
     if (spawned == 0 && requested > 0) {
         // ---- Determine which cap blocked the spawn ----
-        int flockCap = sim.flockParams(sim.activeFlock()).maxFlockSize;
+        int flockCap = sim.flockParams(sim.activeFlock()).reproduction.maxFlockSize;
         int flockCnt = sim.countInFlock(sim.activeFlock());
         if (sim.data().count >= sim.maxBoids()) {
             statusBar()->showMessage(
@@ -1089,6 +1262,44 @@ void MainWindow::onRemove()
 }
 
 void MainWindow::onClearAll() { m_glWidget->simulation().data().clear(); }
+
+void MainWindow::onSaveConfig()
+{
+    QString path = QFileDialog::getSaveFileName(this,
+        "Save Configuration", QString(), "Biod Config (*.biodcfg)");
+    if (path.isEmpty()) return;
+    // Ensure .biodcfg extension
+    if (!path.endsWith(".biodcfg", Qt::CaseInsensitive))
+        path += ".biodcfg";
+
+    auto& sim = m_glWidget->simulation();
+    sim.saveCurrentParams(); // Flush active params before saving
+    if (sim.saveConfig(path.toUtf8().constData()))
+        statusBar()->showMessage("Config saved: " + path, 3000);
+    else
+        statusBar()->showMessage("Failed to save config", 3000);
+}
+
+void MainWindow::onLoadConfig()
+{
+    QString path = QFileDialog::getOpenFileName(this,
+        "Load Configuration", QString(), "Biod Config (*.biodcfg)");
+    if (path.isEmpty()) return;
+
+    auto& sim = m_glWidget->simulation();
+    if (!sim.loadConfig(path.toUtf8().constData())) {
+        statusBar()->showMessage("Failed to load config: " + path, 3000);
+        return;
+    }
+
+    // Rebuild UI for the new flock set
+    updateFlockCombo();
+    updateFlockButtons();
+    refreshSliders();
+    rebuildRelationshipUI();
+
+    statusBar()->showMessage("Config loaded: " + path, 3000);
+}
 
 // ---- UI helpers ----
 void MainWindow::updateFlockButtons()
@@ -1287,9 +1498,9 @@ void MainWindow::updateColorButtons()
         const auto& fp = sim.flockParams(af);
         m_maleColorBtn->setStyleSheet(
             QString("background-color: rgb(%1,%2,%3); border: 1px solid #666;")
-                .arg(static_cast<int>(fp.maleColorR * 255))
-                .arg(static_cast<int>(fp.maleColorG * 255))
-                .arg(static_cast<int>(fp.maleColorB * 255)));
+                .arg(static_cast<int>(fp.appearance.maleColorR * 255))
+                .arg(static_cast<int>(fp.appearance.maleColorG * 255))
+                .arg(static_cast<int>(fp.appearance.maleColorB * 255)));
     }
 
     // Female color button
@@ -1297,16 +1508,16 @@ void MainWindow::updateColorButtons()
         const auto& fp = sim.flockParams(af);
         m_femaleColorBtn->setStyleSheet(
             QString("background-color: rgb(%1,%2,%3); border: 1px solid #666;")
-                .arg(static_cast<int>(fp.femaleColorR * 255))
-                .arg(static_cast<int>(fp.femaleColorG * 255))
-                .arg(static_cast<int>(fp.femaleColorB * 255)));
+                .arg(static_cast<int>(fp.appearance.femaleColorR * 255))
+                .arg(static_cast<int>(fp.appearance.femaleColorG * 255))
+                .arg(static_cast<int>(fp.appearance.femaleColorB * 255)));
     }
 
     // Sex colors checkbox
     if (m_sexColorsCheck) {
         const auto& fp = sim.flockParams(af);
         m_sexColorsCheck->blockSignals(true);
-        m_sexColorsCheck->setChecked(fp.useSexColors);
+        m_sexColorsCheck->setChecked(fp.appearance.useSexColors);
         m_sexColorsCheck->blockSignals(false);
     }
 
@@ -1314,7 +1525,7 @@ void MainWindow::updateColorButtons()
     if (m_invertHungerCheck) {
         const auto& fp = sim.flockParams(af);
         m_invertHungerCheck->blockSignals(true);
-        m_invertHungerCheck->setChecked(fp.invertHungerSpeed);
+        m_invertHungerCheck->setChecked(fp.hunger.invertHungerSpeed);
         m_invertHungerCheck->blockSignals(false);
     }
 
@@ -1324,7 +1535,7 @@ void MainWindow::updateColorButtons()
     if (m_uprightCheck) {
         const auto& fp = sim.flockParams(af);
         m_uprightCheck->blockSignals(true);
-        m_uprightCheck->setChecked(fp.uprightSprite);
+        m_uprightCheck->setChecked(fp.appearance.uprightSprite);
         m_uprightCheck->blockSignals(false);
     }
 

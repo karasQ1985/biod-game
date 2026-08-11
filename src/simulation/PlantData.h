@@ -8,12 +8,14 @@ struct PlantParams {
     float maxPlants = 200.0f;
     float initialPlants = 80.0f;
     float eatRange = 18.0f;        // How close a boid must be to eat (pixels)
+    float plantFoodValue = 0.6f;   // Hunger restored by a fully-grown plant (0.0-1.0)
     float growthTime = 40.0f;      // Seconds from eaten to fully grown
     float spreadChance = 0.03f;    // Per-second probability a mature plant spawns offspring
     float spreadRange = 80.0f;     // Max distance offspring can appear from parent (pixels)
     float seasonLength = 60.0f;    // Seconds per season (spring/summer/autumn/winter cycle)
     float fertilizeRadius = 60.0f; // How far a death fertilizes nearby plants (pixels)
     float fertilizeBoost = 0.30f;  // Instant growth added to nearby plants when a boid starves
+    float carryingPressure = 0.0f;  // Extra hunger decay when population exceeds carrying capacity (0.0=off)
 
     // Derived season growth multiplier: simTime / seasonLength determines season
     // Spring (0) = 1.5x, Summer (1) = 1.0x, Autumn (2) = 0.5x, Winter (3) = 0.0x

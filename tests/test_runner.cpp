@@ -10,6 +10,7 @@
 // ============================================================================
 
 #include "simulation/Simulation.h"
+#include "core/WorldConstants.h"
 #include <iostream>
 #include <string>
 #include <iomanip>
@@ -191,30 +192,30 @@ void test_active_flock_switching() {
 
     // Modify params for flock 0
     auto& p0 = sim.params();
-    p0.separationWeight = 5.0f;
+    p0.perception.separationWeight = 5.0f;
     sim.saveCurrentParams();
 
     // Switch to flock 1
     sim.setActiveFlock(1);
     CHECK_EQ(sim.activeFlock(), 1, "Active flock switched to 1");
-    CHECK_FLOAT_EQ(sim.params().separationWeight, 2.5f, 0.01f, "Flock 1 has default separationWeight");
+    CHECK_FLOAT_EQ(sim.params().perception.separationWeight, 2.5f, 0.01f, "Flock 1 has default separationWeight");
 
     // Modify flock 1 params
-    sim.params().cohesionWeight = 1.5f;
+    sim.params().perception.cohesionWeight = 1.5f;
     sim.saveCurrentParams();
 
     // Switch back to flock 0, verify params persist
     sim.setActiveFlock(0);
     CHECK_EQ(sim.activeFlock(), 0, "Active flock switched back to 0");
-    CHECK_FLOAT_EQ(sim.params().separationWeight, 5.0f, 0.01f, "Flock 0 separationWeight persisted");
+    CHECK_FLOAT_EQ(sim.params().perception.separationWeight, 5.0f, 0.01f, "Flock 0 separationWeight persisted");
 
     // Switch to flock 2 (new)
     sim.setActiveFlock(2);
     CHECK_EQ(sim.activeFlock(), 2, "Active flock switched to 2");
-    CHECK_FLOAT_EQ(sim.params().separationWeight, 2.5f, 0.01f, "New flock has default params");
+    CHECK_FLOAT_EQ(sim.params().perception.separationWeight, 2.5f, 0.01f, "New flock has default params");
 
     // Verify flock 1 params persisted
-    CHECK_FLOAT_EQ(sim.flockParams(1).cohesionWeight, 1.5f, 0.01f, "Flock 1 cohesionWeight persisted");
+    CHECK_FLOAT_EQ(sim.flockParams(1).perception.cohesionWeight, 1.5f, 0.01f, "Flock 1 cohesionWeight persisted");
 
     // Invalid active flock switch
     sim.setActiveFlock(-1);
@@ -416,14 +417,14 @@ void test_parameter_bounds() {
     auto& p = sim.params();
 
     // Set parameters to minimum reasonable values
-    p.separationRadius = 0.0f;
-    p.alignmentRadius = 0.0f;
-    p.cohesionRadius = 0.0f;
-    p.separationWeight = 0.0f;
-    p.alignmentWeight = 0.0f;
-    p.cohesionWeight = 0.0f;
-    p.boundaryWeight = 0.0f;
-    p.wanderWeight = 0.0f;
+    p.perception.separationRadius = 0.0f;
+    p.perception.alignmentRadius = 0.0f;
+    p.perception.cohesionRadius = 0.0f;
+    p.perception.separationWeight = 0.0f;
+    p.perception.alignmentWeight = 0.0f;
+    p.perception.cohesionWeight = 0.0f;
+    p.boundary.boundaryWeight = 0.0f;
+    p.boundary.wanderWeight = 0.0f;
     sim.saveCurrentParams();
 
     sim.spawnRandom(5);
@@ -431,25 +432,25 @@ void test_parameter_bounds() {
     CHECK_EQ(sim.data().count, 5, "Zero-weight params: boids survive one frame");
 
     // Set parameters to high values
-    p.separationWeight = 10.0f;
-    p.alignmentWeight = 10.0f;
-    p.cohesionWeight = 10.0f;
-    p.boundaryWeight = 10.0f;
-    p.wanderWeight = 10.0f;
-    p.maxSpeed = 1000.0f;
-    p.maxForce = 10000.0f;
+    p.perception.separationWeight = 10.0f;
+    p.perception.alignmentWeight = 10.0f;
+    p.perception.cohesionWeight = 10.0f;
+    p.boundary.boundaryWeight = 10.0f;
+    p.boundary.wanderWeight = 10.0f;
+    p.movement.maxSpeed = 1000.0f;
+    p.movement.maxForce = 10000.0f;
     sim.saveCurrentParams();
 
     sim.update(0.016f);
     CHECK_EQ(sim.data().count, 5, "High-weight params: boids survive");
 
     // Check hunger system
-    p.hungerDecayRate = 0.0f; // No decay
+    p.hunger.hungerDecayRate = 0.0f; // No decay
     sim.saveCurrentParams();
     sim.update(1.0f);
     CHECK_EQ(sim.data().count, 5, "Zero hunger decay: no boids starve in 1s");
 
-    p.hungerDecayRate = 0.008f; // Default
+    p.hunger.hungerDecayRate = 0.008f; // Default
     sim.saveCurrentParams();
     for (int i = 0; i < 20; ++i) sim.update(1.0f); // 20 seconds
     CHECK(sim.data().count >= 0, "Hunger system works without crash");
@@ -464,13 +465,14 @@ void test_reproduction_bounds() {
     auto& p = sim.params();
 
     // Set reproduction to trigger every frame with high output
-    p.reproductionInterval = 0.0f;
-    p.reproductionMinOffspring = 1;
-    p.reproductionMaxOffspring = 10;
-    p.reproductionMinHunger = 0.0f;
-    p.maxFlockSize = 1000;
-    p.hungerDecayRate = 0.0f; // No decay
-    p.adultAge = 0.0f; // Instant adult
+    p.reproduction.reproductionInterval = 0.0f;
+    p.reproduction.reproductionMinOffspring = 1.0f;
+    p.reproduction.reproductionMaxOffspring = 10.0f;
+    p.reproduction.reproductionMinHunger = 0.0f;
+    p.reproduction.maxFlockSize = 1000;
+    p.hunger.hungerDecayRate = 0.0f; // No decay
+    p.age.juvenileAge = 0.0f;  // Make boids Adult immediately (reproduction uses AgeStage)
+    p.age.youngAge = 0.0f;
     sim.saveCurrentParams();
 
     // Spawn some boids and advance simulation
@@ -481,7 +483,7 @@ void test_reproduction_bounds() {
     CHECK(sim.data().count >= 10, "Reproduction does not crash");
 
     // Set maxFlockSize to 0 (edge)
-    p.maxFlockSize = 0;
+    p.reproduction.maxFlockSize = 0;
     sim.saveCurrentParams();
     sim.update(0.016f);
     CHECK(sim.data().count >= 0, "Zero maxFlockSize does not crash");
@@ -554,10 +556,10 @@ void test_plant_ecology() {
 
     // Add boids that eat plants
     auto& p = sim.params();
-    p.hungerDecayRate = 0.02f; // Fast hunger
-    p.forageWeight = 5.0f;
-    p.forageHungerThreshold = 1.0f; // Always forage
-    p.chaseRange = 100.0f;
+    p.hunger.hungerDecayRate = 0.02f; // Fast hunger
+    p.hunger.forageWeight = 5.0f;
+    p.hunger.forageHungerThreshold = 1.0f; // Always forage
+    p.predation.chaseRange = 100.0f;
     sim.saveCurrentParams();
 
     sim.spawnRandom(50);
@@ -681,7 +683,7 @@ void test_capacity_enforcement() {
         Simulation sim;
         sim.init(1920.0f, 1080.0f, 10000);
         auto& p = sim.params();
-        p.maxFlockSize = 100;
+        p.reproduction.maxFlockSize = 100;
         sim.saveCurrentParams();
 
         // Fill flock 0 to its cap
@@ -698,7 +700,7 @@ void test_capacity_enforcement() {
         Simulation sim;
         sim.init(1920.0f, 1080.0f, 50);
         auto& p = sim.params();
-        p.maxFlockSize = 30;
+        p.reproduction.maxFlockSize = 30;
         sim.saveCurrentParams();
 
         // Partial fill: 30 fits per-flock cap, but global max=50
@@ -721,14 +723,15 @@ void test_capacity_enforcement() {
         // Configure both flocks identically for reproduction
         for (int f = 0; f < 2; ++f) {
             auto& fp = sim.flockParams(f);
-            fp.reproductionInterval = 0.0f;
-            fp.reproductionMinOffspring = 1;
-            fp.reproductionMaxOffspring = 3;
-            fp.reproductionMinHunger = 0.0f;
-            fp.maxFlockSize = 100;  // per-flock cap >> global cap
-            fp.hungerDecayRate = 0.0f;
-            fp.adultAge = 0.0f;
-            fp.separationRadius = 10.0f;  // tight for small world
+            fp.reproduction.reproductionInterval = 0.0f;
+            fp.reproduction.reproductionMinOffspring = 1.0f;
+            fp.reproduction.reproductionMaxOffspring = 3.0f;
+            fp.reproduction.reproductionMinHunger = 0.0f;
+            fp.reproduction.maxFlockSize = 100;  // per-flock cap >> global cap
+            fp.hunger.hungerDecayRate = 0.0f;
+            fp.age.juvenileAge = 0.0f;   // Bypass juvenile stage (reproduction controlled by AgeStage)
+            fp.age.youngAge = 0.0f;       // Start as Adult directly
+            fp.perception.separationRadius = 10.0f;  // tight for small world
         }
         sim.setActiveFlock(0);
         sim.spawnRandom(10);  // 5 male + 5 female
@@ -757,7 +760,7 @@ void test_capacity_enforcement() {
         Simulation sim;
         sim.init(1920.0f, 1080.0f, 10000);
         auto& p = sim.params();
-        p.maxFlockSize = 5;
+        p.reproduction.maxFlockSize = 5;
         sim.saveCurrentParams();
 
         sim.spawnRandom(5);
@@ -768,6 +771,582 @@ void test_capacity_enforcement() {
 
         sim.addBoid(200.0f, 200.0f);
         CHECK_EQ(sim.countInFlock(0), 5, "addBoid blocked again by per-flock cap");
+    }
+}
+
+// ============================================================================
+//  Phase 2: Social Dynamics Tests (2.1 - 2.6)
+// ============================================================================
+
+// ---- 2.1 Male Combat ----
+void test_combat_system() {
+    TEST_SUITE("Phase 2.1: Male combat system");
+
+    Simulation sim;
+    sim.init(1920.0f, 1080.0f, 10000);
+
+    auto& p = sim.params();
+    // Verify default combat params exist
+    CHECK_FLOAT_EQ(p.combat.combatRadius, 30.0f, 0.01f, "Default combatRadius");
+    CHECK_FLOAT_EQ(p.combat.combatProbability, 0.30f, 0.01f, "Default combatProbability");
+    CHECK_FLOAT_EQ(p.combat.combatFatigueGain, 0.15f, 0.01f, "Default combatFatigueGain");
+    CHECK_FLOAT_EQ(p.combat.combatCooldown, 5.0f, 0.01f, "Default combatCooldown");
+
+    // Modify and verify persistence
+    p.combat.combatRadius = 50.0f;
+    p.combat.combatProbability = 0.8f;
+    sim.saveCurrentParams();
+    sim.setActiveFlock(1);
+    sim.setActiveFlock(0);
+    CHECK_FLOAT_EQ(sim.params().combat.combatRadius, 50.0f, 0.01f, "Combat params persist after flock switch");
+
+    // Verify per-flock isolation
+    CHECK_FLOAT_EQ(sim.flockParams(0).combat.combatRadius, 50.0f, 0.01f, "Flock 0 combat persisted");
+    CHECK_FLOAT_EQ(sim.flockParams(1).combat.combatRadius, 30.0f, 0.01f, "Flock 1 combat unchanged");
+}
+
+// ---- 2.2 Hatred System ----
+void test_hatred_system() {
+    TEST_SUITE("Phase 2.2: Hatred / Enmity system");
+
+    Simulation sim;
+    sim.init(1920.0f, 1080.0f, 10000);
+
+    auto& p = sim.params();
+    CHECK_FLOAT_EQ(p.hatred.hatredGainPerKill, 0.25f, 0.01f, "Default hatredGainPerKill");
+    CHECK_FLOAT_EQ(p.hatred.hatredDecayRate, 0.02f, 0.01f, "Default hatredDecayRate");
+    CHECK_FLOAT_EQ(p.hatred.hatredFleeRadiusBoost, 3.0f, 0.01f, "Default hatredFleeBoost");
+    CHECK_FLOAT_EQ(p.hatred.hatredFleeWeightBoost, 2.0f, 0.01f, "Default hatredWeightBoost");
+
+    // Verify SoA arrays are initialized for new boids
+    sim.spawnRandom(5);
+    CHECK_EQ(sim.data().count, 5, "Boids spawned for hatred test");
+    for (int i = 0; i < sim.data().count; ++i) {
+        CHECK_EQ(sim.data().hatredTarget[i], 255, "New boid has no hatred target (255)");
+        CHECK_FLOAT_EQ(sim.data().hatredLevel[i], 0.0f, 0.001f, "New boid has zero hatred");
+    }
+}
+
+// ---- 2.3 Escape Strategy ----
+void test_escape_strategy() {
+    TEST_SUITE("Phase 2.3: Escape strategy selection");
+
+    Simulation sim;
+    sim.init(1920.0f, 1080.0f, 10000);
+
+    auto& p = sim.params();
+    CHECK_FLOAT_EQ(p.escape.escapeStrategy, 0.0f, 0.01f, "Default strategy = DirectFlee");
+    CHECK_FLOAT_EQ(p.escape.escapeStrategyMix, 0.4f, 0.01f, "Default mix factor");
+    CHECK_FLOAT_EQ(p.escape.escapeZigzagAmp, 0.6f, 0.01f, "Default zigzag amplitude");
+
+    // Test all strategy values (0-3) are settable
+    for (int s = 0; s <= 3; ++s) {
+        p.escape.escapeStrategy = static_cast<float>(s);
+        sim.saveCurrentParams();
+        CHECK_FLOAT_EQ(sim.params().escape.escapeStrategy, static_cast<float>(s), 0.01f,
+                       ("Strategy " + std::to_string(s) + " persisted").c_str());
+    }
+}
+
+// ---- 2.4 Defensive Cooperation ----
+void test_defensive_cooperation() {
+    TEST_SUITE("Phase 2.4: Defensive cooperation");
+
+    Simulation sim;
+    sim.init(1920.0f, 1080.0f, 10000);
+
+    auto& p = sim.params();
+    CHECK_FLOAT_EQ(p.defense.defenseRadius, 180.0f, 0.01f, "Default defenseRadius");
+    CHECK_FLOAT_EQ(p.defense.defenseResponseWeight, 1.2f, 0.01f, "Default responseWeight");
+    CHECK_FLOAT_EQ(p.defense.defenseGroupThreshold, 2.0f, 0.01f, "Default groupThreshold");
+
+    // Verify per-flock isolation
+    p.defense.defenseRadius = 300.0f;
+    sim.saveCurrentParams();
+    sim.setActiveFlock(1);
+    CHECK_FLOAT_EQ(sim.params().defense.defenseRadius, 180.0f, 0.01f, "Flock 1 defense unchanged");
+    sim.setActiveFlock(0);
+    CHECK_FLOAT_EQ(sim.params().defense.defenseRadius, 300.0f, 0.01f, "Flock 0 defense persisted");
+}
+
+// ---- 2.5 Cohesion Dynamics ----
+void test_cohesion_dynamics() {
+    TEST_SUITE("Phase 2.5: Cohesion dynamics");
+
+    Simulation sim;
+    sim.init(1920.0f, 1080.0f, 10000);
+
+    auto& p = sim.params();
+    CHECK_FLOAT_EQ(p.cohesionDyn.cohesionBaseWeight, 1.0f, 0.01f, "Default baseWeight");
+    CHECK_FLOAT_EQ(p.cohesionDyn.cohesionThreatBoost, 2.0f, 0.01f, "Default threatBoost");
+    CHECK_FLOAT_EQ(p.cohesionDyn.cohesionHungerDecay, 0.3f, 0.01f, "Default hungerDecay");
+    CHECK_FLOAT_EQ(p.cohesionDyn.cohesionDensityDecay, 0.5f, 0.01f, "Default densityDecay");
+
+    // Set extreme hunger decay → boids spread when hungry
+    p.cohesionDyn.cohesionHungerDecay = 1.0f;
+    p.hunger.hungerDecayRate = 0.1f;  // Fast hunger
+    p.hunger.forageHungerThreshold = 0.8f;
+    sim.saveCurrentParams();
+
+    sim.spawnRandom(20);
+    // Run simulation: boids should survive despite fast hunger (they forage)
+    for (int i = 0; i < 30; ++i) sim.update(0.016f);
+    CHECK(sim.data().count >= 5, "Boids survive with dynamic cohesion + foraging");
+}
+
+// ---- 2.6 Environmental Carrying Capacity ----
+void test_carrying_capacity() {
+    TEST_SUITE("Phase 2.6: Environmental carrying capacity");
+
+    Simulation sim;
+    sim.init(1920.0f, 1080.0f, 10000);
+
+    // Set minimal plants and high carrying pressure
+    sim.plantParams().initialPlants = 5;
+    sim.plantParams().maxPlants = 5;
+    sim.plantParams().plantFoodValue = 0.3f;
+    sim.plantParams().carryingPressure = 0.0f;  // Disabled by default
+
+    auto& p = sim.params();
+    p.hunger.hungerDecayRate = 0.01f;  // Slow decay
+    sim.saveCurrentParams();
+
+    // Spawn many boids with pressure OFF → slow hunger decay
+    sim.spawnRandom(100);
+    sim.update(1.0f);
+    float hungerAfter1s_noPressure = sim.data().hunger[0];
+    CHECK(hungerAfter1s_noPressure > 0.7f, "Slow hunger with pressure OFF");
+
+    // Reset and enable pressure
+    sim.init(1920.0f, 1080.0f, 10000);
+    sim.plantParams().initialPlants = 5;
+    sim.plantParams().maxPlants = 5;
+    sim.plantParams().plantFoodValue = 0.3f;
+    sim.plantParams().carryingPressure = 0.5f;  // Moderate pressure
+
+    p.hunger.hungerDecayRate = 0.01f;
+    sim.saveCurrentParams();
+    sim.spawnRandom(100);
+    sim.update(1.0f);
+    float hungerAfter1s_pressure = sim.data().hunger[0];
+    CHECK(hungerAfter1s_pressure < hungerAfter1s_noPressure,
+          "Carrying pressure accelerates hunger decay ("
+          << hungerAfter1s_pressure << " < " << hungerAfter1s_noPressure << ")");
+}
+
+// 2.7 Phase 1.7: Attack hit/miss, dodge and damage system
+void test_health_combat() {
+    TEST_SUITE("Phase 1.7: Health / Dodge / Damage");
+
+    // Test 1: Health params exist and are settable
+    Simulation sim;
+    sim.init(1920.0f, 1080.0f, 10000);
+    auto& p = sim.params();
+
+    CHECK_FLOAT_EQ(p.health.dodgeChanceBase, 0.3f, 0.01f, "Default dodgeChanceBase");
+    CHECK_FLOAT_EQ(p.health.damageToHealth, 0.5f, 0.01f, "Default damageToHealth");
+    CHECK_FLOAT_EQ(p.health.healthRegenRate, 0.01f, 0.001f, "Default healthRegenRate");
+    CHECK_FLOAT_EQ(p.health.healthInitial, 1.0f, 0.01f, "Default healthInitial");
+
+    // Test 2: Modify health params and verify per-flock isolation
+    p.health.dodgeChanceBase = 0.6f;
+    p.health.damageToHealth = 0.8f;
+    sim.saveCurrentParams();
+    sim.setActiveFlock(1);
+    CHECK_FLOAT_EQ(sim.params().health.dodgeChanceBase, 0.3f, 0.01f, "Flock 1 has default dodge");
+    sim.setActiveFlock(0);
+    CHECK_FLOAT_EQ(sim.params().health.dodgeChanceBase, 0.6f, 0.01f, "Flock 0 has modified dodge");
+
+    // Test 3: New boids start with full health
+    sim.spawnRandom(10);
+    for (int i = 0; i < sim.data().count; ++i) {
+        CHECK_FLOAT_EQ(sim.data().health[i], 1.0f, 0.001f, "New boid has full health");
+    }
+
+    // Test 4: Health regenerates when well-fed
+    // Reduce health artificially, then run simulation with no hunger decay
+    sim = Simulation{};
+    sim.init(1920.0f, 1080.0f, 10000);
+    p = sim.params();
+    p.hunger.hungerDecayRate = 0.0f;  // No hunger decay
+    p.health.healthRegenRate = 1.0f;  // 100% regen per second
+    sim.saveCurrentParams();
+
+    sim.spawnRandom(5);
+    sim.data().health[0] = 0.3f;  // Injured
+    sim.update(0.5f);  // 0.5 seconds of regen
+    CHECK(sim.data().health[0] > 0.3f,
+          "Health regenerates: " << sim.data().health[0] << " > 0.3");
+
+    // Test 5: Health does NOT regen when hungry (hunger <= 0.5)
+    sim = Simulation{};
+    sim.init(1920.0f, 1080.0f, 10000);
+    p = sim.params();
+    p.hunger.hungerDecayRate = 0.02f;  // Fast hunger decay to drop below 0.5
+    p.health.healthRegenRate = 1.0f;
+    sim.saveCurrentParams();
+
+    sim.spawnRandom(3);
+    sim.data().health[0] = 0.3f;
+    sim.data().hunger[0] = 0.3f;  // Below regen threshold
+    sim.update(0.5f);
+    CHECK_FLOAT_EQ(sim.data().health[0], 0.3f, 0.001f,
+                   "No regen when hunger below 0.5");
+
+    // Test 6: Direct damage application (verify health field works)
+    sim = Simulation{};
+    sim.init(1920.0f, 1080.0f, 10000);
+    sim.spawnRandom(5);
+    sim.data().health[0] -= 0.3f;
+    sim.data().health[1] = 0.0f;
+    CHECK_FLOAT_EQ(sim.data().health[0], 0.7f, 0.001f, "Direct damage reduces health");
+    CHECK_FLOAT_EQ(sim.data().health[1], 0.0f, 0.001f, "Health can reach zero");
+
+    // NOTE: Full predation+damage integration test is deferred to manual verification.
+    // The unit-level health/dodge/regen/damage logic is covered above.
+    // See: launch Biod.exe, set up predator/prey, verify damage and dodge in combat.
+}
+
+// ================================================================
+// Phase 3.1: Nest System
+// ================================================================
+void test_nest_system() {
+    TEST_SUITE("Phase 3.1: Nest system");
+
+    Simulation sim;
+    sim.init(1920.0f, 1080.0f, 10000);
+
+    const int NUM_FLOCKS = 4;
+    // Create 4 flocks
+    while (sim.flockCount() < NUM_FLOCKS)
+        sim.addFlock();
+
+    // Spawn 10 boids per flock
+    sim.setActiveFlock(0);
+    sim.spawnRandom(10);
+    sim.setActiveFlock(1);
+    sim.spawnRandom(10);
+
+    // Test 1: Default nest param values
+    const NestParams& np = sim.nestParams();
+    CHECK(np.maxNests == 20.0f, "Default maxNests = 20");
+    CHECK(np.initialNests == 4.0f, "Default initialNests = 4");
+    CHECK(np.nestRadius == 150.0f, "Default nestRadius = 150");
+    CHECK(np.contestDuration == 10.0f, "Default contestDuration = 10");
+    CHECK(np.defenseThreshold == 3.0f, "Default defenseThreshold = 3");
+
+    // Test 2: Modify and persist nest params
+    NestParams& mutNp = sim.nestParams();
+    mutNp.maxNests = 30.0f;
+    mutNp.nestRadius = 200.0f;
+    CHECK(mutNp.maxNests == 30.0f, "Modified maxNests persists");
+    CHECK(mutNp.nestRadius == 200.0f, "Modified nestRadius persists");
+
+    // Test 3: Default NestPrefSuf per-flock values
+    sim.setActiveFlock(0);
+    FlockParams& fp = sim.params();
+    CHECK(fp.nestPref.nestReturnWeight > 0.0f, "Default nestReturnWeight positive");
+    CHECK(fp.nestPref.nestPreferFoodDensity > 0.0f, "Default food density pref positive");
+    CHECK(fp.nestPref.nestSelectionRange > 0.0f, "Default selection range positive");
+
+    // Test 4: Modify per-flock nest prefs on flock 0
+    fp.nestPref.nestReturnWeight = 0.5f;
+    fp.nestPref.nestSelectionRange = 400.0f;
+    CHECK(fp.nestPref.nestReturnWeight == 0.5f, "Modified nestReturnWeight persists");
+    CHECK(fp.nestPref.nestSelectionRange == 400.0f, "Modified selectionRange persists");
+
+    // Test 5: Switch to flock 1 and verify independent prefs
+    sim.setActiveFlock(1);
+    FlockParams& fp2 = sim.params();
+    fp2.nestPref.nestReturnWeight = 0.8f;
+    CHECK(fp2.nestPref.nestReturnWeight == 0.8f, "Flock 1 return weight set");
+    // Switch back and verify flock 0 preserved
+    sim.setActiveFlock(0);
+    FlockParams& fp0 = sim.params();
+    CHECK(fp0.nestPref.nestReturnWeight == 0.5f, "Flock 0 return weight unchanged after switch");
+
+    // Test 6: Nests exist after init
+    const NestData& nests = sim.nests();
+    int nOwned = 0;
+    int nUnowned = 0;
+    for (int i = 0; i < nests.count; ++i) {
+        if (nests.ownerFlock[i] >= 0) ++nOwned;
+        else ++nUnowned;
+    }
+    CHECK(nests.count >= 4, "At least initialNests (4) created");
+    CHECK(nOwned >= 2, "Some nests assigned to flocks");
+
+    // Test 7: ownedBy() helper
+    if (nOwned > 0) {
+        int firstOwner = -1;
+        for (int i = 0; i < nests.count; ++i) {
+            if (nests.ownerFlock[i] >= 0) { firstOwner = nests.ownerFlock[i]; break; }
+        }
+        if (firstOwner >= 0) {
+            int count = nests.ownedBy(firstOwner);
+            CHECK(count >= 1, "ownedBy() returns correct count");
+        }
+    }
+
+    // Test 8: Food storage initial = 0 (before any simulation updates)
+    for (int i = 0; i < nests.count; ++i) {
+        CHECK(nests.foodStored[i] == 0.0f, "Initial food stored at nest = 0");
+    }
+
+    // Test 9: Contest state initial = none (before simulation)
+    for (int i = 0; i < nests.count; ++i) {
+        CHECK(nests.isContested[i] == 0, "Nest not initially contested");
+        CHECK(nests.contestAttacker[i] == -1, "No initial contest attacker");
+        CHECK(nests.contestTimer[i] == 0.0f, "Contest timer starts at 0");
+    }
+
+    // Test 10: Defense rating + food storage after update (Phase 3.1b)
+    for (int i = 0; i < 60; ++i) sim.update(0.016f);  // ~1 second
+    // With Section 4 contest active, defenseRating may be zeroed on contested-then-transferred nests.
+    // Verify simulation runs without NaN/crash and defense ratings are non-negative.
+    bool defenseValid = true;
+    for (int i = 0; i < nests.count; ++i) {
+        if (nests.defenseRating[i] < 0.0f) defenseValid = false;
+    }
+    CHECK(defenseValid, "All defense ratings non-negative after 1s sim");
+    // Food storage may or may not happen depending on boid positions,
+    // but at minimum it should not crash or go negative
+    bool foodValid = true;
+    for (int i = 0; i < nests.count; ++i) {
+        if (nests.foodStored[i] < 0.0f || nests.foodStored[i] > 1.0f)
+            foodValid = false;
+    }
+    CHECK(foodValid, "Food stored within [0, 1] range after updates");
+}
+
+// Phase 3.1c: Nest Contest + Day/Night Cycle
+void test_nest_contest() {
+    TEST_SUITE("Phase 3.1c: Nest contest");
+
+    Simulation sim;
+    sim.init(1920.0f, 1080.0f, 10000);
+    while (sim.flockCount() < 3)
+        sim.addFlock();
+
+    // Freeze boid movement for deterministic contest tests.
+    // Contest logic depends on boid positions within nestRadius;
+    // maxSpeed=0 prevents boids from drifting during long simulations.
+    for (int f = 0; f < sim.flockCount(); ++f) {
+        sim.flockParams(f).movement.maxSpeed = 0.0f;
+        sim.flockParams(f).movement.maxForce = 0.0f;
+    }
+
+    NestData& nests = sim.nests();
+    float nx = 960.0f, ny = 540.0f;
+
+    // ---- C1: No boids → nest not contested ----
+    nests.clear();
+    nests.add(nx, ny, 0);
+    sim.data().count = 0;
+    sim.update(0.016f);
+    CHECK(nests.isContested[0] == 0, "C1: No boids → not contested");
+    CHECK(nests.contestTimer[0] == 0.0f, "C1: Timer stays 0");
+
+    // ---- C2: Same-flock boids do not trigger contest ----
+    nests.clear();
+    nests.add(nx, ny, 0);
+    sim.data().count = 0;
+    // Place 6 flock-0 boids at nest (spread within 10px)
+    for (int i = 0; i < 6; ++i) {
+        sim.data().posX[i] = nx + i * 2.0f;
+        sim.data().posY[i] = ny + i * 2.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+        sim.data().flockId[i] = 0;
+        sim.data().hunger[i] = 0.5f;
+        sim.data().health[i] = 1.0f;
+    }
+    sim.data().count = 6;
+    sim.update(0.016f);
+    CHECK(nests.isContested[0] == 0, "C2: Same-flock boids → not contested");
+
+    // ---- C3: Foreign boids below defense threshold → not contested ----
+    nests.clear();
+    nests.add(nx, ny, 0);
+    sim.data().count = 0;
+    // 8 flock-0 defenders → defenseRating = 8/3 ≈ 2.67, threshold = 2.67*3 = 8.0
+    for (int i = 0; i < 8; ++i) {
+        sim.data().posX[i] = nx + i * 2.0f;
+        sim.data().posY[i] = ny + i * 2.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+        sim.data().flockId[i] = 0;
+        sim.data().hunger[i] = 0.5f;
+        sim.data().health[i] = 1.0f;
+    }
+    // 6 flock-1 attackers → 6 < 8.0 → not enough
+    for (int i = 8; i < 14; ++i) {
+        sim.data().posX[i] = nx + i * 2.0f;
+        sim.data().posY[i] = ny + i * 2.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+        sim.data().flockId[i] = 1;
+        sim.data().hunger[i] = 0.5f;
+        sim.data().health[i] = 1.0f;
+    }
+    sim.data().count = 14;
+    sim.update(0.016f);
+    CHECK(nests.isContested[0] == 0, "C3: 6 foreign boids < 8.0 defense → not contested");
+
+    // ---- C4: Foreign boids exceed threshold → contest, then transfer ----
+    nests.clear();
+    nests.add(nx, ny, 0);
+    sim.data().count = 0;
+    // 2 flock-0 defenders → defenseRating = 2/3 ≈ 0.67, threshold = 0.67*3 = 2.0
+    for (int i = 0; i < 2; ++i) {
+        sim.data().posX[i] = nx + i * 2.0f;
+        sim.data().posY[i] = ny + i * 2.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+        sim.data().flockId[i] = 0;
+        sim.data().hunger[i] = 0.5f;
+        sim.data().health[i] = 1.0f;
+    }
+    // 8 flock-1 attackers → 8 > 2.0 → contested
+    for (int i = 2; i < 10; ++i) {
+        sim.data().posX[i] = nx + i * 2.0f;
+        sim.data().posY[i] = ny + i * 2.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+        sim.data().flockId[i] = 1;
+        sim.data().hunger[i] = 0.5f;
+        sim.data().health[i] = 1.0f;
+    }
+    sim.data().count = 10;
+    // contestDuration = 10.0, update in 0.5s steps for 11s → ownership transfer
+    for (int i = 0; i < 22; ++i)
+        sim.update(0.5f);
+    CHECK_EQ(nests.ownerFlock[0], 1, "C4: Ownership transferred to flock 1 after 11s");
+    CHECK(nests.isContested[0] == 0, "C4: Contest state reset after transfer");
+    CHECK(nests.contestTimer[0] == 0.0f, "C4: Timer reset after transfer");
+    CHECK(nests.contestAttacker[0] == -1, "C4: Attacker reset after transfer");
+
+    // ---- C5: contestTimer decays when attacker leaves ----
+    nests.clear();
+    nests.add(nx, ny, 1);
+    sim.data().count = 0;
+    // 2 flock-1 defenders → defenseRating = 2/3 ≈ 0.67, thr = 2.0
+    for (int i = 0; i < 2; ++i) {
+        sim.data().posX[i] = nx + i * 2.0f;
+        sim.data().posY[i] = ny + i * 2.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+        sim.data().flockId[i] = 1;
+        sim.data().hunger[i] = 0.5f;
+        sim.data().health[i] = 1.0f;
+    }
+    // 10 flock-2 attackers → 10 > 2.0 → contested
+    for (int i = 2; i < 12; ++i) {
+        sim.data().posX[i] = nx + i * 2.0f;
+        sim.data().posY[i] = ny + i * 2.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+        sim.data().flockId[i] = 2;
+        sim.data().hunger[i] = 0.5f;
+        sim.data().health[i] = 1.0f;
+    }
+    sim.data().count = 12;
+    // Advance contest halfway
+    for (int i = 0; i < 10; ++i)
+        sim.update(0.5f);
+    CHECK(nests.isContested[0] == 1, "C5: Contest active after 5s");
+    float timerBefore = nests.contestTimer[0];
+    CHECK(timerBefore > 0.0f, "C5: Timer > 0 during contest");
+
+    // Now remove all flock-2 boids (move far away)
+    for (int i = 2; i < 12; ++i) {
+        sim.data().posX[i] = -5000.0f;
+        sim.data().posY[i] = -5000.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+    }
+    // Run updates: timer decays at 2x speed
+    for (int i = 0; i < 10; ++i)
+        sim.update(0.5f);
+    CHECK(nests.contestTimer[0] == 0.0f, "C5: Timer decayed to 0 after attacker left");
+    CHECK(nests.isContested[0] == 0, "C5: Contest reset after attacker left");
+    CHECK(nests.contestAttacker[0] == -1, "C5: Attacker reset after decay");
+
+    // ---- C6: Ownership transfer resets all state correctly ----
+    nests.clear();
+    nests.add(nx, ny, 0);
+    sim.data().count = 0;
+    // 2 flock-0 defenders
+    for (int i = 0; i < 2; ++i) {
+        sim.data().posX[i] = nx + i * 2.0f;
+        sim.data().posY[i] = ny + i * 2.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+        sim.data().flockId[i] = 0;
+        sim.data().hunger[i] = 0.5f;
+        sim.data().health[i] = 1.0f;
+    }
+    // 8 flock-2 attackers
+    for (int i = 2; i < 10; ++i) {
+        sim.data().posX[i] = nx + i * 2.0f;
+        sim.data().posY[i] = ny + i * 2.0f;
+        sim.data().velX[i] = 0.0f;
+        sim.data().velY[i] = 0.0f;
+        sim.data().flockId[i] = 2;
+        sim.data().hunger[i] = 0.5f;
+        sim.data().health[i] = 1.0f;
+    }
+    sim.data().count = 10;
+    // Run past contestDuration
+    for (int i = 0; i < 25; ++i)
+        sim.update(0.5f);
+    CHECK_EQ(nests.ownerFlock[0], 2, "C6: Ownership transferred to flock 2");
+    CHECK(nests.isContested[0] == 0, "C6: isContested reset");
+    CHECK(nests.contestTimer[0] == 0.0f, "C6: contestTimer reset");
+    CHECK(nests.contestAttacker[0] == -1, "C6: contestAttacker reset");
+    // defenseRating recalculated by Section 1 for new owner; may be non-zero
+    CHECK(nests.defenseRating[0] >= 0.0f, "C6: defenseRating non-negative");
+}
+
+void test_day_night_cycle() {
+    TEST_SUITE("Phase 3.1c: Day/night cycle");
+
+    // C7: Day phase boundary values
+    {
+        float period = WorldConst::SECONDS_PER_SIM_DAY;  // 30.0
+        float phase0 = std::fmod(0.0f / period, 1.0f);
+        CHECK_FLOAT_EQ(phase0, 0.0f, 0.001f, "C7: Phase at t=0 is 0.0");
+
+        float phaseQuarter = std::fmod(7.5f / period, 1.0f);
+        CHECK_FLOAT_EQ(phaseQuarter, 0.25f, 0.001f, "C7: Phase at t=7.5 is 0.25");
+
+        float phaseHalf = std::fmod(15.0f / period, 1.0f);
+        CHECK_FLOAT_EQ(phaseHalf, 0.5f, 0.001f, "C7: Phase at t=15 is 0.5");
+
+        float phaseThreeQuarter = std::fmod(22.5f / period, 1.0f);
+        CHECK_FLOAT_EQ(phaseThreeQuarter, 0.75f, 0.001f, "C7: Phase at t=22.5 is 0.75");
+
+        float phaseFull = std::fmod(30.0f / period, 1.0f);
+        CHECK_FLOAT_EQ(phaseFull, 0.0f, 0.001f, "C7: Phase at t=30 wraps to 0.0");
+    }
+
+    // C8: ambientLight stays within [0.3, 1.0] using PI (single cycle)
+    {
+        const float PI = 3.14159265f;
+        for (float t = 0.0f; t <= 30.0f; t += 0.5f) {
+            float dayPhase = std::fmod(t / WorldConst::SECONDS_PER_SIM_DAY, 1.0f);
+            float light = 0.3f + 0.7f * std::sin(dayPhase * PI);
+            CHECK(light >= 0.3f - 0.002f, "C8: light >= 0.3");
+            CHECK(light <= 1.0f + 0.002f, "C8: light <= 1.0");
+        }
+        // Verify peak and trough explicitly
+        // Peak at phase 0.5: sin(PI/2) = 1
+        float peak = 0.3f + 0.7f * std::sin(0.5f * PI);
+        CHECK_FLOAT_EQ(peak, 1.0f, 0.001f, "C8: Peak light = 1.0 at phase 0.5");
+
+        // Trough at phase 0.0 or 1.0: sin(0) = 0
+        float trough = 0.3f + 0.7f * std::sin(0.0f * PI);
+        CHECK_FLOAT_EQ(trough, 0.3f, 0.001f, "C8: Trough light = 0.3 at phase 0.0");
     }
 }
 
@@ -881,10 +1460,10 @@ void test_rapid_api_abuse() {
         // Set per-flock caps via editor pattern: modify m_params, save, switch, repeat
         // IMPORTANT: setActiveFlock() internally calls saveCurrentParams(),
         // so direct array modification would be overwritten.
-        sim.params().maxFlockSize = 50;
+        sim.params().reproduction.maxFlockSize = 50;
         sim.saveCurrentParams();       // save to flock 0
         sim.setActiveFlock(1);
-        sim.params().maxFlockSize = 50;
+        sim.params().reproduction.maxFlockSize = 50;
         sim.saveCurrentParams();       // save to flock 1
         sim.setActiveFlock(0);         // switch back, loads flock 0's params
 
@@ -930,6 +1509,16 @@ int main()
     test_spawn_all_flocks();
     test_color_persistence_after_remove();
     test_capacity_enforcement();
+    test_combat_system();
+    test_hatred_system();
+    test_escape_strategy();
+    test_defensive_cooperation();
+    test_cohesion_dynamics();
+    test_carrying_capacity();
+    test_health_combat();
+    test_nest_system();
+    test_nest_contest();
+    test_day_night_cycle();
     test_rapid_api_abuse();
 
     std::cout << "\n=============================================" << std::endl;

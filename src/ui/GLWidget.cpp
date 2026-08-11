@@ -69,9 +69,13 @@ void GLWidget::paintGL()
     qint64 t2 = m_frameTimer.nsecsElapsed();
 
     // ---- Render ----
-    m_renderer.render(m_sim.data(), m_sim.plants(), m_sim.worldW(), m_sim.worldH(),
+    m_renderer.render(m_sim.data(), m_sim.plants(), m_sim.nests(),
+                      m_sim.flockColorR(), m_sim.flockColorG(), m_sim.flockColorB(),
+                      m_sim.worldW(), m_sim.worldH(),
+                      m_sim.simTime(),
                       m_frameIndex, m_sim.globalParams().hungerFlashEnabled,
-                      m_sim.flockSpriteNames(), m_sim.flockUprightFlags());
+                      m_sim.flockSpriteNames(), m_sim.flockUprightFlags(),
+                      m_sim.flockAgeSizes(), m_sim.flockSexSizes());
     qint64 t3 = m_frameTimer.nsecsElapsed();
 
     // ---- Performance tracking ----
