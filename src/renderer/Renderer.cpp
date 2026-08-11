@@ -93,6 +93,176 @@ void main() {
 }
 )glsl";
 
+// -------------------- Phase 3.6: Terrain shaders --------------------
+
+// Terrain bake: Simplex noise → FBO texture
+static const char* TERRAIN_BAKE_VS = R"glsl(
+#version 330 core
+layout(location = 0) in vec2 aPos;
+out vec2 vCoord;
+void main() {
+    vCoord = aPos;
+    gl_Position = vec4(aPos * 2.0 - 1.0, 0.0, 1.0);
+}
+)glsl";
+
+static const char* TERRAIN_BAKE_FS = R"glsl(
+#version 330 core
+in vec2 vCoord;
+out vec4 FragColor;
+
+uniform float uLatitude;   // -90 (S pole) to +90 (N pole)
+uniform float uWorldW;     // world pixel width
+uniform float uWorldH;     // world pixel height
+
+vec3 mod289(vec3 x) { return x - floor(x / 289.0) * 289.0; }
+vec2 mod289(vec2 x) { return x - floor(x / 289.0) * 289.0; }
+vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+
+float snoise(vec2 v) {
+    const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+                         -0.577350269189626, 0.024390243902439);
+    vec2 i  = floor(v + dot(v, C.yy));
+    vec2 x0 = v - i + dot(i, C.xx);
+    vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    vec4 x12 = x0.xyxy + C.xxzz;
+    x12.xy -= i1;
+    i = mod289(i);
+    vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0))
+                     + i.x + vec3(0.0, i1.x, 1.0));
+    vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy),
+                            dot(x12.zw,x12.zw)), 0.0);
+    m = m*m; m = m*m;
+    vec3 x = 2.0 * fract(p * C.www) - 1.0;
+    vec3 h = abs(x) - 0.5;
+    vec3 ox = floor(x + 0.5);
+    vec3 a0 = x - ox;
+    m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
+    vec3 g;
+    g.x  = a0.x * x0.x + h.x * x0.y;
+    g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+    return 130.0 * dot(m, g);
+}
+
+float fbm(vec2 p) {
+    float v = 0.0;
+    float a = 0.65;
+    for (int i = 0; i < 5; i++) { v += a * snoise(p); p *= 2.1; a *= 0.45; }
+    return v * 0.5 + 0.5;
+}
+
+float moistureNoise(vec2 p) {
+    float v = 0.0;
+    float a = 0.6;
+    for (int i = 0; i < 4; i++) { v += a * snoise(p + 100.0); p *= 2.1; a *= 0.45; }
+    return v * 0.5 + 0.5;
+}
+
+void main() {
+    // Noise sampled per-world-pixel: same physical feature size in X and Y
+    // e.g. 1300x200 world: X goes 0→3.25, Y goes 0→0.5 → features ~400px diameter
+    const float pixelsPerNoiseUnit = 400.0;
+    vec2 pos = vCoord * vec2(uWorldW, uWorldH) / pixelsPerNoiseUnit;
+    float elev = fbm(pos);
+    float moist = moistureNoise(pos);
+
+    // Latitude → uniform climate temperature factor (entire map, not per-pixel)
+    // 0 = pole (cold), 1 = equator (hot)
+    float absLat = abs(uLatitude);
+    float tempFactor = 1.0 - smoothstep(0.0, 90.0, absLat);
+    tempFactor = clamp(tempFactor, 0.15, 1.0);
+
+    // Biome palette
+    vec3 deepWater = vec3(0.10, 0.14, 0.30);
+    vec3 water     = vec3(0.13, 0.20, 0.38);
+    vec3 sand      = vec3(0.55, 0.52, 0.40);
+    vec3 grass     = vec3(0.32, 0.45, 0.28);
+    vec3 forest    = vec3(0.18, 0.28, 0.20);
+    vec3 rock      = vec3(0.35, 0.33, 0.30);
+    vec3 snowPeak  = vec3(0.65, 0.63, 0.62);
+    // Cold-climate colors
+    vec3 tundraCol = vec3(0.55, 0.60, 0.65);
+    vec3 iceCol    = vec3(0.75, 0.80, 0.85);
+
+    // Elevation thresholds (shifted by temperature for snowline)
+    float coldShift = (1.0 - tempFactor) * 0.25;
+    float t0 = smoothstep(0.08 - coldShift, 0.15 + coldShift, elev);
+    float t1 = smoothstep(0.22 - coldShift, 0.30, elev);
+    float t2 = smoothstep(0.35, 0.45 + coldShift * 0.5, elev);
+    float t3 = smoothstep(0.55, 0.70, elev);
+    float t4 = smoothstep(0.78, 0.88, elev);
+    float t5 = smoothstep(0.90, 0.96, elev);
+
+    // Build color with uniform climate influence (no per-pixel gradient)
+    vec3 col = deepWater;
+    col = mix(col, water,     t0);
+    // In cold climates, replace sand with tundra
+    vec3 lowGround = mix(sand, tundraCol, 1.0 - tempFactor);
+    col = mix(col, lowGround,  t1);
+    // Grass vs tundra for mid elevation
+    vec3 midGround = mix(grass, mix(tundraCol, grass, 0.5), 1.0 - tempFactor);
+    col = mix(col, midGround, t2);
+    col = mix(col, forest,    t3);
+    col = mix(col, rock,      t4);
+    // Snowline lower in cold climates
+    float snowMix = mix(0.0, 0.6, 1.0 - tempFactor);
+    col = mix(col, mix(snowPeak, iceCol, 1.0 - tempFactor), t5 + snowMix * (1.0 - t5));
+
+    // Moisture boost for vegetation in warm areas
+    col = mix(col, col * 1.15, moist * 0.3 * smoothstep(0.30, 0.70, elev) * tempFactor);
+
+    // Slope shading (reduced intensity for boid visibility)
+    float d = 1.0/2048.0;
+    float eL = fbm(pos + vec2(d, 0)*48.0);
+    float eR = fbm(pos - vec2(d, 0)*48.0);
+    float eU = fbm(pos + vec2(0, d)*48.0);
+    float eD = fbm(pos - vec2(0, d)*48.0);
+    col *= 1.0 - length(vec2(eR-eL, eD-eU)) * 0.4;
+
+    // Strong desaturation (~60%) for boid visibility
+    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    col = mix(col, vec3(lum), 0.60);
+
+    // Reduce overall brightness so boid colors pop
+    col *= 0.75;
+
+    FragColor = vec4(col, 1.0);
+}
+)glsl";
+
+// Terrain display: samples FBO + day/night color temperature
+static const char* TERRAIN_DISPLAY_VS = R"glsl(
+#version 330 core
+layout(location = 0) in vec2 aPos;
+layout(location = 1) in vec2 aUV;
+uniform mat4 uProj;
+out vec2 vUV;
+void main() {
+    vUV = aUV;
+    gl_Position = uProj * vec4(aPos, 0.0, 1.0);
+}
+)glsl";
+
+static const char* TERRAIN_DISPLAY_FS = R"glsl(
+#version 330 core
+in vec2 vUV;
+uniform sampler2D uTerrainTex;
+uniform float uDayPhase;
+out vec4 FragColor;
+
+void main() {
+    vec3 terrain = texture(uTerrainTex, vUV).rgb;
+    float df = pow(sin(uDayPhase * 3.14159265), 1.5);
+    float bgLight = 0.18 + 0.82 * df;
+    vec3 nightTint = vec3(0.15, 0.25, 0.55);
+    vec3 dayTint   = vec3(1.05, 1.02, 0.92);
+    vec3 bgTint = mix(nightTint, dayTint, df);
+    vec3 outColor = terrain * bgTint * bgLight;
+    outColor = max(outColor, vec3(0.02));
+    FragColor = vec4(outColor, 1.0);
+}
+)glsl";
+
 Renderer::Renderer() = default;
 
 Renderer::~Renderer()
@@ -103,6 +273,12 @@ Renderer::~Renderer()
     if (m_instanceVBO) glDeleteBuffers(1, &m_instanceVBO);
     if (m_spriteTexArray) glDeleteTextures(1, &m_spriteTexArray);
     if (m_program) glDeleteProgram(m_program);
+    // Phase 3.6: Terrain cleanup
+    if (m_terrainVAO) glDeleteVertexArrays(1, &m_terrainVAO);
+    if (m_terrainVBO) glDeleteBuffers(1, &m_terrainVBO);
+    if (m_terrainTex) glDeleteTextures(1, &m_terrainTex);
+    if (m_terrainFBO) glDeleteFramebuffers(1, &m_terrainFBO);
+    if (m_terrainProgram) glDeleteProgram(m_terrainProgram);
 }
 
 void Renderer::init()
@@ -182,6 +358,31 @@ void Renderer::init()
 
     // Create a minimal 1-layer sprite texture array (layer 0 = white, for "no sprite" fallback)
     createSpriteArray(1);
+
+    // Phase 3.6: Terrain display program + quad VAO (FBO created on first bake)
+    m_terrainProgram = createProgram(TERRAIN_DISPLAY_VS, TERRAIN_DISPLAY_FS);
+
+    // Terrain display quad VAO (world-space quad + UV)
+    glGenVertexArrays(1, &m_terrainVAO);
+    glBindVertexArray(m_terrainVAO);
+    static const float quadData[] = {
+        // posX, posY, uvU, uvV  (pos will be set per-frame, UV is fixed)
+        0.0f, 0.0f, 0.0f, 0.0f,
+        1.0f, 0.0f, 1.0f, 0.0f,
+        1.0f, 1.0f, 1.0f, 1.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        1.0f, 1.0f, 1.0f, 1.0f,
+        0.0f, 1.0f, 0.0f, 1.0f,
+    };
+    glGenBuffers(1, &m_terrainVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, m_terrainVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadData), quadData, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                          (void*)(2 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glBindVertexArray(0);
 }
 
 void Renderer::createSpriteArray(int numLayers)
@@ -292,6 +493,168 @@ bool Renderer::spritesChanged(const QStringList& paths) const
     return false;
 }
 
+// Phase 0.7: Terrain config from WorldSetupDialog
+void Renderer::setTerrainConfig(float latitude,
+                                float waterPct, float forestPct, float grasslandPct,
+                                float desertPct, float tundraPct, float mountainPct,
+                                float wetlandPct)
+{
+    m_terrainConfig.latitude      = latitude;
+    m_terrainConfig.waterPct      = waterPct;
+    m_terrainConfig.forestPct     = forestPct;
+    m_terrainConfig.grasslandPct  = grasslandPct;
+    m_terrainConfig.desertPct     = desertPct;
+    m_terrainConfig.tundraPct     = tundraPct;
+    m_terrainConfig.mountainPct   = mountainPct;
+    m_terrainConfig.wetlandPct    = wetlandPct;
+    m_terrainDirty = true;  // Re-bake next frame
+}
+
+// Phase 0.7: Create or resize terrain FBO to match world aspect ratio
+void Renderer::createOrResizeTerrainFBO(float worldW, float worldH)
+{
+    // Compute FBO dimensions (max dimension 2048, proportional smaller dim)
+    const int maxDim = 2048;
+    int fboW, fboH;
+    if (worldW >= worldH) {
+        fboW = maxDim;
+        fboH = std::max(1, static_cast<int>(maxDim * worldH / worldW));
+    } else {
+        fboH = maxDim;
+        fboW = std::max(1, static_cast<int>(maxDim * worldW / worldH));
+    }
+
+    // Only resize if dimensions changed
+    if (fboW == m_terrainFBOW && fboH == m_terrainFBOH && m_terrainFBO != 0)
+        return;
+
+    // Delete old FBO/texture if they exist
+    if (m_terrainTex) glDeleteTextures(1, &m_terrainTex);
+    if (m_terrainFBO) glDeleteFramebuffers(1, &m_terrainFBO);
+
+    m_terrainFBOW = fboW;
+    m_terrainFBOH = fboH;
+
+    glGenFramebuffers(1, &m_terrainFBO);
+    glGenTextures(1, &m_terrainTex);
+    glBindTexture(GL_TEXTURE_2D, m_terrainTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, fboW, fboH, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_terrainFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, m_terrainTex, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    m_terrainDirty = true;  // Re-bake with new aspect ratio
+}
+
+// Phase 3.6: Bake terrain Simplex noise to FBO texture (one-time cost until dirty)
+void Renderer::bakeTerrain(float worldW, float worldH)
+{
+    // Ensure FBO matches current world aspect ratio
+    createOrResizeTerrainFBO(worldW, worldH);
+    if (!m_terrainFBO || !m_terrainTex) return;
+
+    GLuint bakeProg = createProgram(TERRAIN_BAKE_VS, TERRAIN_BAKE_FS);
+    if (!bakeProg) return;
+
+    // Pass terrain config as uniforms
+    GLint locLat = glGetUniformLocation(bakeProg, "uLatitude");
+    GLint locW   = glGetUniformLocation(bakeProg, "uWorldW");
+    GLint locH   = glGetUniformLocation(bakeProg, "uWorldH");
+    if (locLat >= 0) glUniform1f(locLat, m_terrainConfig.latitude);
+    if (locW >= 0)   glUniform1f(locW, worldW);
+    if (locH >= 0)   glUniform1f(locH, worldH);
+
+    // Save state
+    GLint prevFBO = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
+    GLint prevViewport[4];
+    glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_terrainFBO);
+    glViewport(0, 0, m_terrainFBOW, m_terrainFBOH);
+    glUseProgram(bakeProg);
+
+    // Full-texture quad in UV space [0,1]
+    glBindVertexArray(m_terrainVAO);
+    float bakeQuad[] = {
+        0.0f, 0.0f, 0.0f, 0.0f,
+        1.0f, 0.0f, 1.0f, 0.0f,
+        1.0f, 1.0f, 1.0f, 1.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        1.0f, 1.0f, 1.0f, 1.0f,
+        0.0f, 1.0f, 0.0f, 1.0f,
+    };
+    glBindBuffer(GL_ARRAY_BUFFER, m_terrainVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(bakeQuad), bakeQuad);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // Restore state
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+    glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+    glDeleteProgram(bakeProg);
+
+    m_terrainDirty = false;
+}
+
+// Phase 3.6: Render terrain background quad with day/night tint
+void Renderer::renderTerrain(float worldW, float worldH)
+{
+    if (!m_terrainProgram || !m_terrainTex) return;
+
+    glUseProgram(m_terrainProgram);
+
+    // World-space quad matching simulation bounds
+    float quad[] = {
+        0.0f,     0.0f,     0.0f, 0.0f,
+        worldW,   0.0f,     1.0f, 0.0f,
+        worldW,   worldH,   1.0f, 1.0f,
+        0.0f,     0.0f,     0.0f, 0.0f,
+        worldW,   worldH,   1.0f, 1.0f,
+        0.0f,     worldH,   0.0f, 1.0f,
+    };
+    glBindBuffer(GL_ARRAY_BUFFER, m_terrainVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quad), quad);
+
+    // Projection matrix (same as main renderer, aspect-corrected)
+    float viewAspect = static_cast<float>(m_viewWidth) / std::max(1, m_viewHeight);
+    float worldAspect = worldW / std::max(worldH, 1.0f);
+    float halfW, halfH;
+    if (viewAspect >= worldAspect) {
+        halfH = worldH / (2.0f * m_viewZoom);
+        halfW = halfH * viewAspect;
+    } else {
+        halfW = worldW / (2.0f * m_viewZoom);
+        halfH = halfW / viewAspect;
+    }
+    QMatrix4x4 proj;
+    proj.ortho(m_viewCenterX - halfW, m_viewCenterX + halfW,
+               m_viewCenterY + halfH, m_viewCenterY - halfH,
+               -1.0f, 1.0f);
+    GLint uProjLoc = glGetUniformLocation(m_terrainProgram, "uProj");
+    glUniformMatrix4fv(uProjLoc, 1, GL_FALSE, proj.constData());
+
+    // Bind terrain texture
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_terrainTex);
+    GLint uTexLoc = glGetUniformLocation(m_terrainProgram, "uTerrainTex");
+    glUniform1i(uTexLoc, 0);
+
+    // Day/night phase uniforms
+    GLint uDayPhaseLoc = glGetUniformLocation(m_terrainProgram, "uDayPhase");
+    // uDayPhase is set in render() before this call
+
+    glBindVertexArray(m_terrainVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+    glUseProgram(0);
+}
+
 void Renderer::resize(int width, int height)
 {
     m_viewWidth = width;
@@ -310,17 +673,43 @@ void Renderer::render(const FlockData& data, const PlantData& plants, const Nest
                       const std::vector<float>& flockAgeSizes,
                       const std::vector<float>& flockSexSizes)
 {
+    // ---- Calculate day/night phase once (shared by terrain + foreground) ----
+    float dayPhase = std::fmod(simTime / WorldConst::SECONDS_PER_SIM_DAY, 1.0f);
+
+    // Phase 3.6: Bake terrain to FBO if dirty (one-time or on world change)
+    if (m_terrainDirty)
+        bakeTerrain(worldW, worldH);
+
+    // Phase 3.6: Render terrain background with day/night tint
+    // Set dayPhase uniform before drawing terrain
+    glUseProgram(m_terrainProgram);
+    GLint uDayPhaseLoc = glGetUniformLocation(m_terrainProgram, "uDayPhase");
+    glUniform1f(uDayPhaseLoc, dayPhase);
+    glUseProgram(0);
+    renderTerrain(worldW, worldH);
+
+    // ---- Boid / plant / nest rendering ----
     glUseProgram(m_program);
 
-    // ---- Day/night cycle (Phase 3.1c) ----
-    float dayPhase = std::fmod(simTime / WorldConst::SECONDS_PER_SIM_DAY, 1.0f);
-    float ambientLight = 0.3f + 0.7f * std::sin(dayPhase * 3.14159265f);  // PI (single cycle per 30s)
+    // Day/night: foreground boid/plant/nest with mild dimming (B+C combined)
+    float fgLight = 0.5f + 0.5f * std::pow(std::sin(dayPhase * 3.14159265f), 1.2f);
     GLint uAmbientLoc = glGetUniformLocation(m_program, "uAmbientLight");
-    glUniform1f(uAmbientLoc, ambientLight);
+    glUniform1f(uAmbientLoc, fgLight);
 
     QMatrix4x4 proj;
-    float halfW = worldW / (2.0f * m_viewZoom);
-    float halfH = worldH / (2.0f * m_viewZoom);
+    // Aspect-corrected projection: world pixels remain square regardless of viewport shape
+    float viewAspect = static_cast<float>(m_viewWidth) / std::max(1, m_viewHeight);
+    float worldAspect = worldW / std::max(worldH, 1.0f);
+    float halfW, halfH;
+    if (viewAspect >= worldAspect) {
+        // Viewport wider than world → world fits height, letterbox on sides
+        halfH = worldH / (2.0f * m_viewZoom);
+        halfW = halfH * viewAspect;
+    } else {
+        // Viewport taller than world → world fits width, letterbox on top/bottom
+        halfW = worldW / (2.0f * m_viewZoom);
+        halfH = halfW / viewAspect;
+    }
     proj.ortho(m_viewCenterX - halfW, m_viewCenterX + halfW,
                m_viewCenterY + halfH, m_viewCenterY - halfH,
                -1.0f, 1.0f);

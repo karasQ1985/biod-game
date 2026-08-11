@@ -88,6 +88,48 @@ void Simulation::init(float worldW, float worldH, int maxBoids)
     }
 }
 
+void Simulation::resizeWorld(float worldW, float worldH)
+{
+    m_worldW = worldW;
+    m_worldH = worldH;
+
+    // Reinitialize spatial grids for new dimensions
+    float maxCohRad = m_params.perception.cohesionRadius;
+    for (auto& fp : m_flockParams)
+        maxCohRad = std::max(maxCohRad, fp.perception.cohesionRadius);
+    m_grid.reinit(worldW, worldH, maxCohRad * 1.5f, m_maxBoids);
+    m_plantGrid.init(worldW, worldH, m_plantParams.eatRange,
+                     static_cast<int>(m_plantParams.maxPlants));
+
+    // Clamp existing boid positions to new bounds
+    for (int i = 0; i < m_data.count; ++i) {
+        m_data.posX[i] = std::clamp(m_data.posX[i], 0.0f, worldW);
+        m_data.posY[i] = std::clamp(m_data.posY[i], 0.0f, worldH);
+    }
+
+    // Regenerate plants within new bounds
+    m_plants.reserve(static_cast<size_t>(m_plantParams.maxPlants));
+    m_plants.clear();
+    std::uniform_real_distribution<float> pxDist(20.0f, worldW - 20.0f);
+    std::uniform_real_distribution<float> pyDist(20.0f, worldH - 20.0f);
+    std::uniform_real_distribution<float> gDist(0.2f, 1.0f);
+    for (int i = 0; i < static_cast<int>(m_plantParams.initialPlants); ++i) {
+        m_plants.add(pxDist(m_rng), pyDist(m_rng), gDist(m_rng));
+    }
+
+    // Regenerate nests within new bounds
+    m_nests.reserve(static_cast<size_t>(m_nestParams.maxNests));
+    m_nests.clear();
+    int nFlocks = static_cast<int>(m_flockParams.size());
+    for (int i = 0; i < static_cast<int>(m_nestParams.initialNests); ++i) {
+        int owner = (i < nFlocks) ? i : -1;
+        m_nests.add(pxDist(m_rng), pyDist(m_rng), owner);
+    }
+
+    // Reset disturbance sources (out-of-bounds after resize)
+    m_disturbances.clear();
+}
+
 void Simulation::update(float dt)
 {
     m_simTime += dt;
@@ -96,6 +138,15 @@ void Simulation::update(float dt)
     if (m_hasTarget && (m_simTime - m_targetTime > 3.0f)) {
         m_hasTarget = false;
     }
+
+    // Phase 3.2: Decay boid memories every frame
+    decayBoidMemories(dt);
+
+    // Phase 3.4: Update disturbance source lifetimes
+    updateDisturbances(dt);
+
+    // Phase 3.5: Update sanity levels
+    updateSanity(dt);
 
     if (m_data.count == 0) { updatePlants(dt); updateNests(dt); return; }
 
@@ -410,6 +461,10 @@ void Simulation::stepFlocks(float dt)
                                       / (distSq / interFlockRadiusSq + 0.1f);
                         ifSepX -= (dx / dist) * force;
                         ifSepY -= (dy / dist) * force;
+                        // Phase 3.2: Record hostile encounter from foreign flock
+                        m_data.recordMemory(i, MemoryEvent::HOSTILE_ENCOUNTER,
+                                            m_data.posX[i], m_data.posY[i],
+                                            0.8f, m_simTime);
                     }
                 }
                 else if (rel == FlockRelation::Predator) {
@@ -432,6 +487,10 @@ void Simulation::stepFlocks(float dt)
                     }
 
                     if (participatesInChase) {
+                    // Phase 3.2: Record prey sighting at prey's position
+                    m_data.recordMemory(i, MemoryEvent::PREY_SIGHTING,
+                                        m_data.posX[j], m_data.posY[j],
+                                        0.7f, m_simTime);
                     float preyRadiusSq = interFlockRadiusSq * 2.0f;
                     if (distSq < preyRadiusSq) {
                         float dist = std::sqrt(distSq) + 0.0001f;
@@ -564,6 +623,10 @@ void Simulation::stepFlocks(float dt)
                     float hateWeight = hatesThisFlock ? (1.0f + m_data.hatredLevel[i] * fp.hatred.hatredFleeWeightBoost) : 1.0f;
                     float fearRadiusSq = interFlockRadiusSq * 2.5f * hateMult;
                     if (distSq < fearRadiusSq) {
+                        // Phase 3.2: Record predator sighting at own position
+                        m_data.recordMemory(i, MemoryEvent::PREDATOR_SIGHTING,
+                                            px, py,
+                                            1.0f, m_simTime);
                         float dist = std::sqrt(distSq) + 0.0001f;
 
                         // Direction directly away from this predator
@@ -705,6 +768,13 @@ void Simulation::stepFlocks(float dt)
         }
         cohesionMod = std::max(0.05f, cohesionMod);
 
+        // Phase 3.5: Sanity reduces cohesion (panicked boids scatter)
+        float sl = m_data.sanityLevel[i];
+        if (sl < m_flockParams[fid].sanity.panickedThreshold)
+            cohesionMod *= m_flockParams[fid].sanity.panickedCohesionMult;
+        else if (sl < m_flockParams[fid].sanity.uneasyThreshold)
+            cohesionMod *= m_flockParams[fid].sanity.uneasyCohesionMult;
+
         m_forceX[i] = sepX + aliX * fp.perception.alignmentWeight
                     + cohX * fp.perception.cohesionWeight * cohesionMod + ifSepX;
         m_forceY[i] = sepY + aliY * fp.perception.alignmentWeight
@@ -750,9 +820,16 @@ void Simulation::stepFlocks(float dt)
         }
 
         // Wander
+        // Phase 3.5: Sanity-modified wander (higher in UNEASY/PANICKED)
+        float sanityWanderMod = 1.0f;
+        if (sl < m_flockParams[fid].sanity.panickedThreshold)
+            sanityWanderMod = m_flockParams[fid].sanity.panickedWanderMult;
+        else if (sl < m_flockParams[fid].sanity.uneasyThreshold)
+            sanityWanderMod = m_flockParams[fid].sanity.uneasyWanderMult;
+
         float angle = m_angleDist(m_rng) * 3.14159265f;
-        m_forceX[i] += std::cos(angle) * fp.boundary.wanderWeight * fp.movement.maxSpeed;
-        m_forceY[i] += std::sin(angle) * fp.boundary.wanderWeight * fp.movement.maxSpeed;
+        m_forceX[i] += std::cos(angle) * fp.boundary.wanderWeight * fp.movement.maxSpeed * sanityWanderMod;
+        m_forceY[i] += std::sin(angle) * fp.boundary.wanderWeight * fp.movement.maxSpeed * sanityWanderMod;
 
         // Target: only attracts IDLE boids (survival behaviors take priority)
         if (m_hasTarget
@@ -766,6 +843,25 @@ void Simulation::stepFlocks(float dt)
                 float desiredY = ty / tDist * fp.movement.maxSpeed;
                 m_forceX[i] += (desiredX - m_data.velX[i]) * fp.boundary.targetWeight;
                 m_forceY[i] += (desiredY - m_data.velY[i]) * fp.boundary.targetWeight;
+            }
+        }
+
+        // Phase 3.4: Apply disturbance forces from mouse clicks
+        if (!m_disturbances.empty()) {
+            for (auto& ds : m_disturbances) {
+                if (ds.expired()) continue;
+                float dx = px - ds.posX;
+                float dy = py - ds.posY;
+                float distSq = dx * dx + dy * dy;
+                float radSq = ds.radius * ds.radius;
+                if (distSq < radSq) {
+                    float dist = std::sqrt(distSq) + 0.0001f;
+                    float falloff = 1.0f - dist / ds.radius;
+                    float sign = (ds.type == DisturbanceType::REPEL) ? 1.0f : -1.0f;
+                    float force = ds.strength * falloff * fp.movement.maxSpeed * 1.5f;
+                    m_forceX[i] += sign * (dx / dist) * force;
+                    m_forceY[i] += sign * (dy / dist) * force;
+                }
             }
         }
     }
@@ -1100,6 +1196,11 @@ void Simulation::updatePlants(float dt)
             float gain = std::min(needed, maxFromPlant);
             m_data.hunger[i] += gain;
 
+            // Phase 3.2: Record food source memory
+            m_data.recordMemory(i, MemoryEvent::FOOD_SOURCE,
+                                m_plants.posX[bestPlant], m_plants.posY[bestPlant],
+                                0.6f, m_simTime);
+
             // Consume plant proportionally (energy transfer)
             float consumed = gain / pp.plantFoodValue;
             m_plants.growth[bestPlant] -= consumed;
@@ -1227,6 +1328,11 @@ void Simulation::updateNests(float dt)
             if (dsq < bestDistSq) { bestDistSq = dsq; bestNest = n; }
         }
         if (bestNest < 0) continue;
+
+        // Phase 3.2: Record nest discovery memory
+        m_data.recordMemory(i, MemoryEvent::NEST_DISCOVERY,
+                            m_nests.posX[bestNest], m_nests.posY[bestNest],
+                            0.9f, m_simTime);
 
         // a) Health regen boost when resting at owned nest
         if (m_data.health[i] < 1.0f && m_data.hunger[i] > 0.3f) {
@@ -1610,6 +1716,115 @@ void Simulation::removeBoidAt(int index)
 
 void Simulation::setTarget(float x, float y) { m_targetX = x; m_targetY = y; m_targetTime = m_simTime; m_hasTarget = true; }
 void Simulation::clearTarget() { m_hasTarget = false; m_targetTime = -1e9f; }
+
+void Simulation::addDisturbance(float x, float y, DisturbanceType type)
+{
+    DisturbanceSource ds;
+    ds.posX = x;
+    ds.posY = y;
+    ds.strength = 1.0f;
+    ds.radius = 150.0f;
+    ds.type = type;
+    m_disturbances.push_back(ds);
+    if (m_disturbances.size() > 32)
+        m_disturbances.erase(m_disturbances.begin());  // Cap at 32 (oldest first)
+}
+
+void Simulation::updateDisturbances(float dt)
+{
+    float decayRate = 0.33f;  // Full decay in ~3 seconds
+    size_t write = 0;
+    for (size_t i = 0; i < m_disturbances.size(); ++i) {
+        m_disturbances[i].strength -= decayRate * dt;
+        if (!m_disturbances[i].expired()) {
+            if (write != i)
+                m_disturbances[write] = m_disturbances[i];
+            ++write;
+        }
+    }
+    m_disturbances.resize(write);
+}
+
+void Simulation::updateSanity(float dt)
+{
+    if (m_flockParams.empty()) return;
+    const NestParams& np = m_nestParams;
+    int nBoids = m_data.count;
+
+    for (int i = 0; i < nBoids; ++i) {
+        int fid = m_data.flockId[i];
+        const auto& sp = m_flockParams[fid].sanity;
+        float s = m_data.sanityLevel[i];
+
+        // ---- Decay factors ----
+        float decay = 0.0f;
+
+        // Predator memory intensity (query nearby)
+        float predMem = m_data.queryMemory(i, MemoryEvent::PREDATOR_SIGHTING,
+                                           m_data.posX[i], m_data.posY[i],
+                                           200.0f, m_simTime);
+        decay += predMem * sp.memoryDecayScale;
+
+        // Hostile encounter memory
+        float hostMem = m_data.queryMemory(i, MemoryEvent::HOSTILE_ENCOUNTER,
+                                           m_data.posX[i], m_data.posY[i],
+                                           200.0f, m_simTime);
+        decay += hostMem * sp.memoryDecayScale * 0.5f;
+
+        // Hunger decay
+        if (m_data.hunger[i] < sp.hungerDecayTrigger) {
+            decay += sp.sanityDecayRate * (sp.hungerDecayTrigger - m_data.hunger[i]) / sp.hungerDecayTrigger;
+        }
+
+        // Fatigue decay
+        if (m_data.fatigue[i] > sp.fatigueDecayTrigger) {
+            decay += sp.sanityDecayRate * (m_data.fatigue[i] - sp.fatigueDecayTrigger) / (1.0f - sp.fatigueDecayTrigger);
+        }
+
+        s -= decay * dt;
+
+        // ---- Recovery factors ----
+        float recovery = sp.sanityRecoveryRate;
+
+        // Nest recovery boost
+        if (m_data.state[i] == static_cast<uint8_t>(BoidState::IDLE)) {
+            float nestRadSq = np.nestRadius * np.nestRadius;
+            for (int n = 0; n < m_nests.count; ++n) {
+                if (m_nests.ownerFlock[n] != fid) continue;
+                float dx = m_nests.posX[n] - m_data.posX[i];
+                float dy = m_nests.posY[n] - m_data.posY[i];
+                if (dx * dx + dy * dy < nestRadSq) {
+                    recovery *= sp.nestRecoveryBoost;
+                    break;
+                }
+            }
+        }
+
+        s += recovery * dt;
+
+        // Clamp
+        if (s < 0.0f) s = 0.0f;
+        if (s > 1.0f) s = 1.0f;
+        m_data.sanityLevel[i] = s;
+    }
+}
+
+void Simulation::decayBoidMemories(float dt)
+{
+    // Build per-event-type decay rates from the first flock's MemorySuf
+    // (decay is global; per-flock parameters are identical unless explicitly edited)
+    if (m_flockParams.empty()) return;
+    const auto& mem = m_flockParams[0].memory;
+    float decayRates[static_cast<int>(MemoryEvent::COUNT)];
+    decayRates[static_cast<int>(MemoryEvent::PREDATOR_SIGHTING)] = mem.memoryDecayRate * mem.predatorMemoryDecayMult;
+    decayRates[static_cast<int>(MemoryEvent::PREY_SIGHTING)]     = mem.memoryDecayRate * mem.preyMemoryDecayMult;
+    decayRates[static_cast<int>(MemoryEvent::FOOD_SOURCE)]       = mem.memoryDecayRate * mem.foodMemoryDecayMult;
+    decayRates[static_cast<int>(MemoryEvent::NEST_DISCOVERY)]    = mem.memoryDecayRate * mem.nestMemoryDecayMult;
+    decayRates[static_cast<int>(MemoryEvent::HOSTILE_ENCOUNTER)] = mem.memoryDecayRate * mem.hostileMemoryDecayMult;
+    decayRates[static_cast<int>(MemoryEvent::MATE_SIGHTING)]     = mem.memoryDecayRate * mem.mateMemoryDecayMult;
+
+    m_data.decayMemories(dt, m_simTime, decayRates, mem.memoryIntensityThreshold);
+}
 
 void Simulation::updateGrid()
 {

@@ -33,21 +33,21 @@ public:
 
     // Build a QGroupBox containing all sliders registered under groupKey.
     // The returned QGroupBox* is owned by parent (caller stores if needed for title updates).
-    // initialBaseFlock/initialBasePlant point to the source struct for initial slider values.
+    // base pointers are used for initial slider values; dispatch via ParamDef::paramBase.
     QGroupBox* buildGroup(const char* groupKey,
                           const QString& groupStyle,
                           const void* initialBaseFlock,
                           const void* initialBasePlant,
+                          const void* initialBaseNest,
                           QWidget* parent);
 
     // Connect all registered sliders to a callback lambda.
-    // The lambda receives (const ParamDef* def, const void* flockBase, const void* plantBase, float val).
-    // flockBase and plantBase are captured externally (mainly for write-back).
+    // The lambda receives (const ParamDef* def, float val).
     template<typename Func>
     void connectAll(Func callback);
 
-    // Refresh all slider values from current FlockParams and PlantParams.
-    void refresh(const void* flockBase, const void* plantBase);
+    // Refresh all slider values from current FlockParams, PlantParams, and NestParams.
+    void refresh(const void* flockBase, const void* plantBase, const void* nestBase);
 
     // Get the GroupBox for a given groupKey (used for title updates in updateFlockButtons).
     // May return nullptr if the group has no sliders (e.g. appearance, relations).

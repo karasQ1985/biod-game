@@ -12,10 +12,7 @@ GLWidget::GLWidget(QWidget* parent)
 {
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
-
-    // Init simulation data early (no GL dependency) so MainWindow
-    // can query flock info during setupUI() / setupToolbar()
-    m_sim.init(1920.0f, 1080.0f, 10000);
+    // Simulation init deferred to configureWorld() -- called after WorldSetupDialog
     m_viewZoom = 1.0f;
 }
 
@@ -143,9 +140,13 @@ void GLWidget::mousePressEvent(QMouseEvent* event)
         float sy = static_cast<float>(event->pos().y()) / height();
         float wx = m_renderer.viewCenterX() + (sx - 0.5f) * m_sim.worldW() / m_viewZoom;
         float wy = m_renderer.viewCenterY() + (sy - 0.5f) * m_sim.worldH() / m_viewZoom;
-        m_sim.setTarget(wx, wy);
+        m_sim.addDisturbance(wx, wy, DisturbanceType::REPEL);
     } else if (event->button() == Qt::RightButton) {
-        m_sim.clearTarget();
+        float sx = static_cast<float>(event->pos().x()) / width();
+        float sy = static_cast<float>(event->pos().y()) / height();
+        float wx = m_renderer.viewCenterX() + (sx - 0.5f) * m_sim.worldW() / m_viewZoom;
+        float wy = m_renderer.viewCenterY() + (sy - 0.5f) * m_sim.worldH() / m_viewZoom;
+        m_sim.addDisturbance(wx, wy, DisturbanceType::ATTRACT);
     }
 }
 
@@ -156,7 +157,7 @@ void GLWidget::mouseMoveEvent(QMouseEvent* event)
         float sy = static_cast<float>(event->pos().y()) / height();
         float wx = m_renderer.viewCenterX() + (sx - 0.5f) * m_sim.worldW() / m_viewZoom;
         float wy = m_renderer.viewCenterY() + (sy - 0.5f) * m_sim.worldH() / m_viewZoom;
-        m_sim.setTarget(wx, wy);
+        m_sim.addDisturbance(wx, wy, DisturbanceType::REPEL);
     }
 }
 
@@ -177,6 +178,30 @@ void GLWidget::setBoidCount(int count)
             m_sim.removeBoidAt(i);
         }
     }
+}
+
+void GLWidget::resizeWorld(float worldW, float worldH)
+{
+    m_sim.resizeWorld(worldW, worldH);
+    // Re-center view on new world center
+    m_renderer.setViewCenter(worldW * 0.5f, worldH * 0.5f);
+    // Re-bake terrain for new dimensions
+    m_renderer.setTerrainDirty();
+}
+
+void GLWidget::configureWorld(float worldW, float worldH,
+                              int boundaryMode, float latitude,
+                              float waterPct, float forestPct, float grasslandPct,
+                              float desertPct, float tundraPct,
+                              float mountainPct, float wetlandPct)
+{
+    m_sim.init(worldW, worldH, 10000);
+    m_sim.globalParams().boundaryMode = static_cast<BoundaryMode>(boundaryMode);
+
+    // Pass terrain configuration to renderer
+    m_renderer.setTerrainConfig(latitude,
+        waterPct, forestPct, grasslandPct,
+        desertPct, tundraPct, mountainPct, wetlandPct);
 }
 
 void GLWidget::spawnBoids(int count)

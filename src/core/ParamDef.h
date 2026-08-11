@@ -4,6 +4,14 @@
 #include <functional>
 #include <string>
 
+// Base struct type for offsetof-based parameter read/write
+// 0=FlockParams, 1=PlantParams, 2=NestParams
+enum ParamBaseType : int {
+    BASE_FLOCK = 0,
+    BASE_PLANT = 1,
+    BASE_NEST  = 2
+};
+
 enum class ScaleMode {
     Div10,      // floatVal = sliderVal / 10.0f
     Div100,     // floatVal = sliderVal / 100.0f
@@ -20,7 +28,8 @@ struct ParamDef {
     int         sliderMax;
     ScaleMode   scale;
     int         initialSliderVal;
-    bool        isPlantParam;      // true = write to PlantParams, false = write to FlockParams
+    int         paramBase = BASE_FLOCK;  // Which base struct: BASE_FLOCK, BASE_PLANT, or BASE_NEST
+    const char* unit = nullptr;    // Display unit (e.g. "px/s", "px", "%", "s", "/s", nullptr=none)
 
     // Optional extra action when value changes (e.g. cohRadius -> updateGrid)
     std::function<void(float)> onChanged;

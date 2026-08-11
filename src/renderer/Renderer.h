@@ -3,6 +3,19 @@
 #include "simulation/FlockData.h"
 #include "simulation/PlantData.h"
 #include "simulation/NestData.h"
+
+// Terrain configuration from WorldSetupDialog (Phase 0.7)
+struct TerrainConfig {
+    float latitude = 45.0f;
+    float waterPct     = 0.20f;
+    float forestPct    = 0.30f;
+    float grasslandPct = 0.30f;
+    float desertPct    = 0.05f;
+    float tundraPct    = 0.00f;
+    float mountainPct  = 0.10f;
+    float wetlandPct   = 0.05f;
+};
+
 #include <vector>
 #include <string>
 #include <QOpenGLFunctions_3_3_Core>
@@ -57,6 +70,15 @@ public:
     // Check whether any sprite file has changed (count / path / MD5 hash)
     bool spritesChanged(const QStringList& currentPaths) const;
 
+    // Phase 3.6: Programmatic terrain via FBO-backed Simplex noise
+    void   bakeTerrain(float worldW, float worldH);
+    void   renderTerrain(float worldW, float worldH);
+    void   setTerrainDirty() { m_terrainDirty = true; }
+    void   setTerrainConfig(float latitude,
+                           float waterPct, float forestPct, float grasslandPct,
+                           float desertPct, float tundraPct, float mountainPct,
+                           float wetlandPct);
+
     const std::vector<std::string>& spriteNames() const { return m_spriteNames; }
 
 private:
@@ -90,7 +112,19 @@ private:
     int m_viewWidth = 800;
     int m_viewHeight = 600;
 
+    // Phase 3.6: Terrain FBO + texture
+    GLuint m_terrainFBO = 0;
+    GLuint m_terrainTex = 0;
+    GLuint m_terrainProgram = 0;
+    GLuint m_terrainVAO = 0;
+    GLuint m_terrainVBO = 0;
+    bool   m_terrainDirty = true;   // Re-bake terrain on next frame
+    int    m_terrainFBOW = 0;        // Actual FBO width (aspect-ratio aware)
+    int    m_terrainFBOH = 0;        // Actual FBO height
+    TerrainConfig m_terrainConfig;   // Biome composition from WorldSetupDialog
+
     void createSpriteArray(int numLayers);
+    void createOrResizeTerrainFBO(float worldW, float worldH);  // Aspect-ratio-aware FBO
     GLuint compileShader(GLenum type, const char* source);
     GLuint createProgram(const char* vertexSrc, const char* fragmentSrc);
 };

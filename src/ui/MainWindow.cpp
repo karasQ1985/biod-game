@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "GLWidget.h"
+#include "WorldSetupDialog.h"
 #include "simulation/Simulation.h"
 #include <QToolBar>
 #include <QDockWidget>
@@ -41,10 +42,34 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     setWindowTitle("Biod - Flock Simulator");
-    resize(1280, 800);
+
+    // ---- World configuration dialog (before simulation init) ----
+    // Defaults (used when user cancels → quick-start with sensible defaults)
+    float worldW = 1920.0f;
+    float worldH = 1080.0f;
+    int   boundaryMode = 3;  // BoundaryMode::Hybrid
+    float latitude = 45.0f;
+    TerrainComposition comp;  // defaults: temperate mix
+
+    WorldSetupDialog dialog(nullptr);
+    if (dialog.exec() == QDialog::Accepted) {
+        // User confirmed → use their settings
+        worldW       = static_cast<float>(dialog.mapWidth());
+        worldH       = static_cast<float>(dialog.mapHeight());
+        boundaryMode = dialog.boundaryMode();
+        latitude     = dialog.latitude();
+        comp         = dialog.composition();
+    }
+    // else: user cancelled → proceed with defaults above
+
+    // Apply world config to GLWidget
 
     m_glWidget = new GLWidget(this);
+    m_glWidget->configureWorld(worldW, worldH, boundaryMode, latitude,
+                               comp.water, comp.forest, comp.grassland,
+                               comp.desert, comp.tundra, comp.mountain, comp.wetland);
     setCentralWidget(m_glWidget);
+    resize(1280, 800);
 
     setupUI();
     setupToolbar();
@@ -244,151 +269,151 @@ void MainWindow::setupUI()
     // ================================================================
 
     // Group: Hunger & Satiety
-    reg.reg({"\u8870\u51cf\u901f\u7387 (Decay Rate)",       "hunger",   HO_N(hunger, hungerDecayRate),       0,   100, ScaleMode::Div1000,   static_cast<int>(p.hunger.hungerDecayRate * 1000),   false});
-    reg.reg({"\u9971\u8179\u901f\u5ea6 (Speed Min)",         "hunger",   HO_N(hunger, hungerSpeedMin),        30,  100, ScaleMode::Div100,    static_cast<int>(p.hunger.hungerSpeedMin * 100),     false});
-    reg.reg({"\u9965\u997f\u901f\u5ea6 (Speed Max)",         "hunger",   HO_N(hunger, hungerSpeedMax),        100, 250, ScaleMode::Div100,    static_cast<int>(p.hunger.hungerSpeedMax * 100),     false});
-    reg.reg({"\u95ea\u70c1\u9608\u503c (Flash Threshold)",   "hunger",   HO_N(hunger, hungerFlashThreshold),  5,   80,  ScaleMode::Div100,    static_cast<int>(p.hunger.hungerFlashThreshold * 100), false});
+    reg.reg({"\u8870\u51cf\u901f\u7387 (Decay Rate)",       "hunger",   HO_N(hunger, hungerDecayRate),       0,   100, ScaleMode::Div1000,   static_cast<int>(p.hunger.hungerDecayRate * 1000),   BASE_FLOCK, "/s"});
+    reg.reg({"\u9971\u8179\u901f\u5ea6 (Speed Min)",         "hunger",   HO_N(hunger, hungerSpeedMin),        30,  100, ScaleMode::Div100,    static_cast<int>(p.hunger.hungerSpeedMin * 100),     BASE_FLOCK, "%"});
+    reg.reg({"\u9965\u997f\u901f\u5ea6 (Speed Max)",         "hunger",   HO_N(hunger, hungerSpeedMax),        100, 250, ScaleMode::Div100,    static_cast<int>(p.hunger.hungerSpeedMax * 100),     BASE_FLOCK, "%"});
+    reg.reg({"\u95ea\u70c1\u9608\u503c (Flash Threshold)",   "hunger",   HO_N(hunger, hungerFlashThreshold),  5,   80,  ScaleMode::Div100,    static_cast<int>(p.hunger.hungerFlashThreshold * 100), BASE_FLOCK, "%"});
 
     // Group: Predation & Escape
-    reg.reg({"\u6355\u730e\u6210\u529f\u7387 (Chase Success)",          "predation", HO_N(predation, chaseSuccessBase),             0,   100, ScaleMode::Div100,    static_cast<int>(p.predation.chaseSuccessBase * 100),              false});
-    reg.reg({"\u9003\u79bb\u6210\u529f\u7387 (Escape Success)",         "predation", HO_N(predation, escapeSuccessBase),            0,   100, ScaleMode::Div100,    static_cast<int>(p.predation.escapeSuccessBase * 100),             false});
-    reg.reg({"\u6355\u730e\u8303\u56f4 (Chase Range)",                  "predation", HO_N(predation, chaseRange),                   5,   100, ScaleMode::OneToOne,  static_cast<int>(p.predation.chaseRange),                           false});
-    reg.reg({"\u730e\u6740\u9965\u997f\u9608\u503c (Hunt Hunger)",       "predation", HO_N(predation, predationMinHunger),           5,   95,  ScaleMode::Div100,    static_cast<int>(p.predation.predationMinHunger * 100),            false});
-    reg.reg({"\u51fb\u6740\u9965\u997f\u9608\u503c (Kill Hunger)",       "predation", HO_N(predation, predationKillHunger),          1,   50,  ScaleMode::Div100,    static_cast<int>(p.predation.predationKillHunger * 100),           false});
-    reg.reg({"\u9971\u8179\u53c2\u4e0e\u7387% (Participation %)",      "predation", HO_N(predation, predationParticipationRate),   1,   100, ScaleMode::Div100,    static_cast<int>(p.predation.predationParticipationRate * 100),    false});
-    reg.reg({"\u8fde\u6740\u589e\u91cd (Kill Weight Gain)",     "predation", HO_N(body, weightGainPerKill),          1,   200, ScaleMode::Div1000,   static_cast<int>(p.body.weightGainPerKill * 1000),            false});
-    reg.reg({"\u95f2\u7f6e\u8870\u51cf/\u79d2 (Decay Rate/s)",   "predation", HO_N(body, weightDecayRate),            1,   20,  ScaleMode::Div1000,   static_cast<int>(p.body.weightDecayRate * 1000),              false});
-    reg.reg({"\u8fde\u6740\u8d85\u65f6/\u79d2 (Streak Timeout)", "predation", HO_N(body, streakTimeout),              5,   100, ScaleMode::Div10,     static_cast<int>(p.body.streakTimeout * 10),                  false});
-    reg.reg({"\u8870\u51cf\u5ef6\u8fdf/\u79d2 (Decay Delay)",    "predation", HO_N(body, decayDelay),                 1,   30,  ScaleMode::OneToOne,  static_cast<int>(p.body.decayDelay),                          false});
-    reg.reg({"\u6700\u5927\u4f53\u91cd (Max Weight)",            "predation", HO_N(body, maxWeight),                 10,  50,  ScaleMode::Div10,     static_cast<int>(p.body.maxWeight * 10),                      false});
-    reg.reg({"\u6700\u5c0f\u4f53\u91cd (Min Weight)",            "predation", HO_N(body, minWeight),                  1,   20,  ScaleMode::Div10,     static_cast<int>(p.body.minWeight * 10),                      false});
+    reg.reg({"\u6355\u730e\u6210\u529f\u7387 (Chase Success)",          "predation", HO_N(predation, chaseSuccessBase),             0,   100, ScaleMode::Div100,    static_cast<int>(p.predation.chaseSuccessBase * 100),              BASE_FLOCK, "%"});
+    reg.reg({"\u9003\u79bb\u6210\u529f\u7387 (Escape Success)",         "predation", HO_N(predation, escapeSuccessBase),            0,   100, ScaleMode::Div100,    static_cast<int>(p.predation.escapeSuccessBase * 100),             BASE_FLOCK, "%"});
+    reg.reg({"\u6355\u730e\u8303\u56f4 (Chase Range)",                  "predation", HO_N(predation, chaseRange),                   5,   100, ScaleMode::OneToOne,  static_cast<int>(p.predation.chaseRange),                           BASE_FLOCK, "px"});
+    reg.reg({"\u730e\u6740\u9965\u997f\u9608\u503c (Hunt Hunger)",       "predation", HO_N(predation, predationMinHunger),           5,   95,  ScaleMode::Div100,    static_cast<int>(p.predation.predationMinHunger * 100),            BASE_FLOCK, "%"});
+    reg.reg({"\u51fb\u6740\u9965\u997f\u9608\u503c (Kill Hunger)",       "predation", HO_N(predation, predationKillHunger),          1,   50,  ScaleMode::Div100,    static_cast<int>(p.predation.predationKillHunger * 100),           BASE_FLOCK, "%"});
+    reg.reg({"\u9971\u8179\u53c2\u4e0e\u7387% (Participation %)",      "predation", HO_N(predation, predationParticipationRate),   1,   100, ScaleMode::Div100,    static_cast<int>(p.predation.predationParticipationRate * 100),    BASE_FLOCK, "%"});
+    reg.reg({"\u8fde\u6740\u589e\u91cd (Kill Weight Gain)",     "predation", HO_N(body, weightGainPerKill),          1,   200, ScaleMode::Div1000,   static_cast<int>(p.body.weightGainPerKill * 1000),            BASE_FLOCK});
+    reg.reg({"\u95f2\u7f6e\u8870\u51cf/\u79d2 (Decay Rate/s)",   "predation", HO_N(body, weightDecayRate),            1,   20,  ScaleMode::Div1000,   static_cast<int>(p.body.weightDecayRate * 1000),              BASE_FLOCK, "/s"});
+    reg.reg({"\u8fde\u6740\u8d85\u65f6/\u79d2 (Streak Timeout)", "predation", HO_N(body, streakTimeout),              5,   100, ScaleMode::Div10,     static_cast<int>(p.body.streakTimeout * 10),                  BASE_FLOCK, "s"});
+    reg.reg({"\u8870\u51cf\u5ef6\u8fdf/\u79d2 (Decay Delay)",    "predation", HO_N(body, decayDelay),                 1,   30,  ScaleMode::OneToOne,  static_cast<int>(p.body.decayDelay),                          BASE_FLOCK, "s"});
+    reg.reg({"\u6700\u5927\u4f53\u91cd (Max Weight)",            "predation", HO_N(body, maxWeight),                 10,  50,  ScaleMode::Div10,     static_cast<int>(p.body.maxWeight * 10),                      BASE_FLOCK});
+    reg.reg({"\u6700\u5c0f\u4f53\u91cd (Min Weight)",            "predation", HO_N(body, minWeight),                  1,   20,  ScaleMode::Div10,     static_cast<int>(p.body.minWeight * 10),                      BASE_FLOCK});
 
     // Group: Inter-Flock
-    reg.reg({"\u7fa4\u95f4\u65a5\u529b (Inter-Flock Repulsion)", "interflock", HO_N(interFlock, interFlockRepulsionWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.interFlock.interFlockRepulsionWeight * 10), false});
-    reg.reg({"\u6355\u98df\u5438\u5f15\u529b (Predator Attraction)","interflock", HO_N(interFlock, predatorAttractionWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.interFlock.predatorAttractionWeight * 10), false});
-    reg.reg({"\u730e\u7269\u6050\u60e7 (Prey Fear)",            "interflock", HO_N(interFlock, preyFearWeight),             0, 50, ScaleMode::Div10, static_cast<int>(p.interFlock.preyFearWeight * 10),         false});
+    reg.reg({"\u7fa4\u95f4\u65a5\u529b (Inter-Flock Repulsion)", "interflock", HO_N(interFlock, interFlockRepulsionWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.interFlock.interFlockRepulsionWeight * 10), BASE_FLOCK});
+    reg.reg({"\u6355\u98df\u5438\u5f15\u529b (Predator Attraction)","interflock", HO_N(interFlock, predatorAttractionWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.interFlock.predatorAttractionWeight * 10), BASE_FLOCK});
+    reg.reg({"\u730e\u7269\u6050\u60e7 (Prey Fear)",            "interflock", HO_N(interFlock, preyFearWeight),             0, 50, ScaleMode::Div10, static_cast<int>(p.interFlock.preyFearWeight * 10),         BASE_FLOCK});
 
     // Group: Reynolds
-    reg.reg({"\u5206\u79bb (Separation)", "reynolds", HO_N(perception, separationWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.perception.separationWeight * 10), false});
-    reg.reg({"\u5bf9\u9f50 (Alignment)",  "reynolds", HO_N(perception, alignmentWeight),  0, 50, ScaleMode::Div10, static_cast<int>(p.perception.alignmentWeight * 10),  false});
-    reg.reg({"\u805a\u96c6 (Cohesion)",   "reynolds", HO_N(perception, cohesionWeight),   0, 50, ScaleMode::Div10, static_cast<int>(p.perception.cohesionWeight * 10),   false});
+    reg.reg({"\u5206\u79bb (Separation)", "reynolds", HO_N(perception, separationWeight), 0, 50, ScaleMode::Div10, static_cast<int>(p.perception.separationWeight * 10), BASE_FLOCK});
+    reg.reg({"\u5bf9\u9f50 (Alignment)",  "reynolds", HO_N(perception, alignmentWeight),  0, 50, ScaleMode::Div10, static_cast<int>(p.perception.alignmentWeight * 10),  BASE_FLOCK});
+    reg.reg({"\u805a\u96c6 (Cohesion)",   "reynolds", HO_N(perception, cohesionWeight),   0, 50, ScaleMode::Div10, static_cast<int>(p.perception.cohesionWeight * 10),   BASE_FLOCK});
 
     // Group: Movement & Collision
-    reg.reg({"\u6700\u5927\u901f\u5ea6 (Max Speed)", "movement", HO_N(movement, maxSpeed), 50, 600, ScaleMode::OneToOne, static_cast<int>(p.movement.maxSpeed), false});
-    reg.reg({"\u4f53\u91cd\u901f\u5ea6\u60e9\u7f5a (Weight Penalty)", "movement", HO_N(movement, weightSpeedPenalty), 0, 200, ScaleMode::Div100, static_cast<int>(p.movement.weightSpeedPenalty * 100), false});
-    reg.reg({"\u786c\u78b0\u649e\u8ddd\u79bb (Hard Collision)", "movement", HO_N(movement, hardCollisionRadius), 0, 50, ScaleMode::Multiply2, static_cast<int>(p.movement.hardCollisionRadius / 2.0f), false});
+    reg.reg({"\u6700\u5927\u901f\u5ea6 (Max Speed)", "movement", HO_N(movement, maxSpeed), 50, 600, ScaleMode::OneToOne, static_cast<int>(p.movement.maxSpeed), BASE_FLOCK, "px/s"});
+    reg.reg({"\u4f53\u91cd\u901f\u5ea6\u60e9\u7f5a (Weight Penalty)", "movement", HO_N(movement, weightSpeedPenalty), 0, 200, ScaleMode::Div100, static_cast<int>(p.movement.weightSpeedPenalty * 100), BASE_FLOCK, "%"});
+    reg.reg({"\u786c\u78b0\u649e\u8ddd\u79bb (Hard Collision)", "movement", HO_N(movement, hardCollisionRadius), 0, 50, ScaleMode::Multiply2, static_cast<int>(p.movement.hardCollisionRadius / 2.0f), BASE_FLOCK, "px"});
 
     // Group: Perception
-    reg.reg({"\u5206\u79bb\u534a\u5f84 (Sep Radius)", "perception", HO_N(perception, separationRadius), 5,  100, ScaleMode::OneToOne, static_cast<int>(p.perception.separationRadius), false});
-    reg.reg({"\u5bf9\u9f50\u534a\u5f84 (Ali Radius)", "perception", HO_N(perception, alignmentRadius),  10, 200, ScaleMode::OneToOne, static_cast<int>(p.perception.alignmentRadius),  false});
-    reg.reg({"\u805a\u96c6\u534a\u5f84 (Coh Radius)", "perception", HO_N(perception, cohesionRadius),   10, 200, ScaleMode::OneToOne, static_cast<int>(p.perception.cohesionRadius),   false,
+    reg.reg({"\u5206\u79bb\u534a\u5f84 (Sep Radius)", "perception", HO_N(perception, separationRadius), 5,  100, ScaleMode::OneToOne, static_cast<int>(p.perception.separationRadius), BASE_FLOCK, "px"});
+    reg.reg({"\u5bf9\u9f50\u534a\u5f84 (Ali Radius)", "perception", HO_N(perception, alignmentRadius),  10, 200, ScaleMode::OneToOne, static_cast<int>(p.perception.alignmentRadius),  BASE_FLOCK, "px"});
+    reg.reg({"\u805a\u96c6\u534a\u5f84 (Coh Radius)", "perception", HO_N(perception, cohesionRadius),   10, 200, ScaleMode::OneToOne, static_cast<int>(p.perception.cohesionRadius),   BASE_FLOCK, "px",
              [this](float) { m_glWidget->simulation().updateGrid(); }});
 
     // Group: Boundary & Wander
-    reg.reg({"\u8fb9\u754c\u89c4\u907f (Boundary Avoid)", "boundary", HO_N(boundary, boundaryWeight), 0,  50,  ScaleMode::Div10,    static_cast<int>(p.boundary.boundaryWeight * 10),  false});
-    reg.reg({"\u8fb9\u754c\u8ddd\u79bb (Margin)",          "boundary", HO_N(boundary, boundaryMargin), 10, 300, ScaleMode::OneToOne,  static_cast<int>(p.boundary.boundaryMargin),        false});
-    reg.reg({"\u968f\u673a\u6e38\u8361 (Wander)",           "boundary", HO_N(boundary, wanderWeight),   0,  30,  ScaleMode::Div10,    static_cast<int>(p.boundary.wanderWeight * 10),    false});
+    reg.reg({"\u8fb9\u754c\u89c4\u907f (Boundary Avoid)", "boundary", HO_N(boundary, boundaryWeight), 0,  50,  ScaleMode::Div10,    static_cast<int>(p.boundary.boundaryWeight * 10),  BASE_FLOCK});
+    reg.reg({"\u8fb9\u754c\u8ddd\u79bb (Margin)",          "boundary", HO_N(boundary, boundaryMargin), 10, 300, ScaleMode::OneToOne,  static_cast<int>(p.boundary.boundaryMargin),        BASE_FLOCK, "px"});
+    reg.reg({"\u968f\u673a\u6e38\u8361 (Wander)",           "boundary", HO_N(boundary, wanderWeight),   0,  30,  ScaleMode::Div10,    static_cast<int>(p.boundary.wanderWeight * 10),    BASE_FLOCK});
 
     // Group: Foraging
-    reg.reg({"\u641c\u5bfb\u8303\u56f4 (Forage Range)",        "forage", HO_N(hunger, forageRange),            30,  400, ScaleMode::OneToOne,  static_cast<int>(p.hunger.forageRange),              false});
-    reg.reg({"\u89c5\u98df\u529b\u5ea6 (Forage Weight)",       "forage", HO_N(hunger, forageWeight),           0,   50,  ScaleMode::Div10,    static_cast<int>(p.hunger.forageWeight * 10),        false});
-    reg.reg({"\u9965\u997f\u9608\u503c (Hunger Threshold)",    "forage", HO_N(hunger, forageHungerThreshold),  10,  90,  ScaleMode::Div100,   static_cast<int>(p.hunger.forageHungerThreshold * 100), false});
+    reg.reg({"\u641c\u5bfb\u8303\u56f4 (Forage Range)",        "forage", HO_N(hunger, forageRange),            30,  400, ScaleMode::OneToOne,  static_cast<int>(p.hunger.forageRange),              BASE_FLOCK, "px"});
+    reg.reg({"\u89c5\u98df\u529b\u5ea6 (Forage Weight)",       "forage", HO_N(hunger, forageWeight),           0,   50,  ScaleMode::Div10,    static_cast<int>(p.hunger.forageWeight * 10),        BASE_FLOCK});
+    reg.reg({"\u9965\u997f\u9608\u503c (Hunger Threshold)",    "forage", HO_N(hunger, forageHungerThreshold),  10,  90,  ScaleMode::Div100,   static_cast<int>(p.hunger.forageHungerThreshold * 100), BASE_FLOCK, "%"});
 
     // Group: Reproduction
-    reg.reg({"\u6700\u5c11\u540e\u4ee3 (Min Offspring)",  "repro", HO_N(reproduction, reproductionMinOffspring), 1,  5,    ScaleMode::OneToOne,  static_cast<int>(p.reproduction.reproductionMinOffspring),                  false});
-    reg.reg({"\u6700\u591a\u540e\u4ee3 (Max Offspring)",  "repro", HO_N(reproduction, reproductionMaxOffspring), 1,  10,   ScaleMode::OneToOne,  static_cast<int>(p.reproduction.reproductionMaxOffspring),                  false});
-    reg.reg({"\u7fa4\u4f53\u4e0a\u9650 (Max Flock Size)", "repro", HO_N(reproduction, maxFlockSize),             50, 5000, ScaleMode::OneToOne,  p.reproduction.maxFlockSize,                              false});
-    reg.reg({"\u6700\u4f4e\u9971\u8179\u503c (Min Hunger)","repro",  HO_N(reproduction, reproductionMinHunger),  40, 95,   ScaleMode::Div100,   static_cast<int>(p.reproduction.reproductionMinHunger * 100), false});
-    reg.reg({"\u7e41\u6b96\u95f4\u9694/\u79d2 (Interval)","repro",   HO_N(reproduction, reproductionInterval),   30, 300,  ScaleMode::OneToOne,  static_cast<int>(p.reproduction.reproductionInterval),       false});
+    reg.reg({"\u6700\u5c11\u540e\u4ee3 (Min Offspring)",  "repro", HO_N(reproduction, reproductionMinOffspring), 1,  5,    ScaleMode::OneToOne,  static_cast<int>(p.reproduction.reproductionMinOffspring),                  BASE_FLOCK});
+    reg.reg({"\u6700\u591a\u540e\u4ee3 (Max Offspring)",  "repro", HO_N(reproduction, reproductionMaxOffspring), 1,  10,   ScaleMode::OneToOne,  static_cast<int>(p.reproduction.reproductionMaxOffspring),                  BASE_FLOCK});
+    reg.reg({"\u7fa4\u4f53\u4e0a\u9650 (Max Flock Size)", "repro", HO_N(reproduction, maxFlockSize),             50, 5000, ScaleMode::OneToOne,  p.reproduction.maxFlockSize,                              BASE_FLOCK});
+    reg.reg({"\u6700\u4f4e\u9971\u8179\u503c (Min Hunger)","repro",  HO_N(reproduction, reproductionMinHunger),  40, 95,   ScaleMode::Div100,   static_cast<int>(p.reproduction.reproductionMinHunger * 100), BASE_FLOCK, "%"});
+    reg.reg({"\u7e41\u6b96\u95f4\u9694/\u79d2 (Interval)","repro",   HO_N(reproduction, reproductionInterval),   30, 300,  ScaleMode::OneToOne,  static_cast<int>(p.reproduction.reproductionInterval),       BASE_FLOCK, "s"});
 
     // Group: Age & Lifecycle (Phase 1.1)
-    reg.reg({"\u6700\u5927\u5bff\u547d (Max Lifespan)",    "age", HO_N(age, maxLifespan),   100, 7200, ScaleMode::OneToOne, static_cast<int>(p.age.maxLifespan),  false});
-    reg.reg({"\u5e7c\u5e74\u671f (Juvenile Age)",          "age", HO_N(age, juvenileAge),    0,   600, ScaleMode::OneToOne, static_cast<int>(p.age.juvenileAge),  false});
-    reg.reg({"\u9752\u5e74\u671f (Young Age)",             "age", HO_N(age, youngAge),      10,  1200, ScaleMode::OneToOne, static_cast<int>(p.age.youngAge),    false});
-    reg.reg({"\u8001\u5e74\u671f (Elder Age)",             "age", HO_N(age, elderAge),      60,  6000, ScaleMode::OneToOne, static_cast<int>(p.age.elderAge),    false});
+    reg.reg({"\u6700\u5927\u5bff\u547d (Max Lifespan)",    "age", HO_N(age, maxLifespan),   100, 7200, ScaleMode::OneToOne, static_cast<int>(p.age.maxLifespan),  BASE_FLOCK, "s"});
+    reg.reg({"\u5e7c\u5e74\u671f (Juvenile Age)",          "age", HO_N(age, juvenileAge),    0,   600, ScaleMode::OneToOne, static_cast<int>(p.age.juvenileAge),  BASE_FLOCK, "s"});
+    reg.reg({"\u9752\u5e74\u671f (Young Age)",             "age", HO_N(age, youngAge),      10,  1200, ScaleMode::OneToOne, static_cast<int>(p.age.youngAge),    BASE_FLOCK, "s"});
+    reg.reg({"\u8001\u5e74\u671f (Elder Age)",             "age", HO_N(age, elderAge),      60,  6000, ScaleMode::OneToOne, static_cast<int>(p.age.elderAge),    BASE_FLOCK, "s"});
 
     // Group: Body Size (Phase 1.2) -- age-stage visual size multipliers
-    reg.reg({"\u5e7c\u5e74\u4f53\u578b (Juvenile Size)", "bodysize", HO_N(age, ageSizeJuvenile), 10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeJuvenile * 100), false});
-    reg.reg({"\u9752\u5e74\u4f53\u578b (Young Size)",    "bodysize", HO_N(age, ageSizeYoung),    10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeYoung * 100),    false});
-    reg.reg({"\u6210\u5e74\u4f53\u578b (Adult Size)",    "bodysize", HO_N(age, ageSizeAdult),    10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeAdult * 100),    false});
-    reg.reg({"\u8001\u5e74\u4f53\u578b (Elder Size)",    "bodysize", HO_N(age, ageSizeElder),    10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeElder * 100),    false});
+    reg.reg({"\u5e7c\u5e74\u4f53\u578b (Juvenile Size)", "bodysize", HO_N(age, ageSizeJuvenile), 10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeJuvenile * 100), BASE_FLOCK, "%"});
+    reg.reg({"\u9752\u5e74\u4f53\u578b (Young Size)",    "bodysize", HO_N(age, ageSizeYoung),    10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeYoung * 100),    BASE_FLOCK, "%"});
+    reg.reg({"\u6210\u5e74\u4f53\u578b (Adult Size)",    "bodysize", HO_N(age, ageSizeAdult),    10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeAdult * 100),    BASE_FLOCK, "%"});
+    reg.reg({"\u8001\u5e74\u4f53\u578b (Elder Size)",    "bodysize", HO_N(age, ageSizeElder),    10, 200, ScaleMode::Div100, static_cast<int>(p.age.ageSizeElder * 100),    BASE_FLOCK, "%"});
 
     // Group: Fatigue (Phase 1.3)
-    reg.reg({"\u7d2f\u79ef\u901f\u7387 (Accum Rate)",    "fatigue", HO_N(fatigue, fatigueAccumRate),    1, 100, ScaleMode::Div1000, static_cast<int>(p.fatigue.fatigueAccumRate * 1000),    false});
-    reg.reg({"\u6062\u590d\u901f\u7387 (Recovery Rate)",  "fatigue", HO_N(fatigue, fatigueRecoveryRate), 10, 500, ScaleMode::Div1000, static_cast<int>(p.fatigue.fatigueRecoveryRate * 1000),  false});
-    reg.reg({"\u901f\u5ea6\u60e9\u7f5a (Speed Penalty)", "fatigue", HO_N(fatigue, fatigueSpeedPenalty),  0, 100, ScaleMode::Div100,  static_cast<int>(p.fatigue.fatigueSpeedPenalty * 100),   false});
+    reg.reg({"\u7d2f\u79ef\u901f\u7387 (Accum Rate)",    "fatigue", HO_N(fatigue, fatigueAccumRate),    1, 100, ScaleMode::Div1000, static_cast<int>(p.fatigue.fatigueAccumRate * 1000),    BASE_FLOCK, "/s"});
+    reg.reg({"\u6062\u590d\u901f\u7387 (Recovery Rate)",  "fatigue", HO_N(fatigue, fatigueRecoveryRate), 10, 500, ScaleMode::Div1000, static_cast<int>(p.fatigue.fatigueRecoveryRate * 1000),  BASE_FLOCK, "/s"});
+    reg.reg({"\u901f\u5ea6\u60e9\u7f5a (Speed Penalty)", "fatigue", HO_N(fatigue, fatigueSpeedPenalty),  0, 100, ScaleMode::Div100,  static_cast<int>(p.fatigue.fatigueSpeedPenalty * 100),   BASE_FLOCK, "%"});
 
     // Group: Gender Dimorphism (Phase 1.4)
-    reg.reg({"\u96c4\u6027\u901f\u5ea6 (Male Speed)",  "gender", HO_N(gender, sexSpeedMale),   50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSpeedMale * 100),   false});
-    reg.reg({"\u96cc\u6027\u901f\u5ea6 (Female Speed)","gender", HO_N(gender, sexSpeedFemale), 50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSpeedFemale * 100), false});
-    reg.reg({"\u96c4\u6027\u4f53\u578b (Male Size)",   "gender", HO_N(gender, sexSizeMale),    50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSizeMale * 100),    false});
-    reg.reg({"\u96cc\u6027\u4f53\u578b (Female Size)", "gender", HO_N(gender, sexSizeFemale),  50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSizeFemale * 100),  false});
+    reg.reg({"\u96c4\u6027\u901f\u5ea6 (Male Speed)",  "gender", HO_N(gender, sexSpeedMale),   50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSpeedMale * 100),   BASE_FLOCK, "%"});
+    reg.reg({"\u96cc\u6027\u901f\u5ea6 (Female Speed)","gender", HO_N(gender, sexSpeedFemale), 50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSpeedFemale * 100), BASE_FLOCK, "%"});
+    reg.reg({"\u96c4\u6027\u4f53\u578b (Male Size)",   "gender", HO_N(gender, sexSizeMale),    50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSizeMale * 100),    BASE_FLOCK, "%"});
+    reg.reg({"\u96cc\u6027\u4f53\u578b (Female Size)", "gender", HO_N(gender, sexSizeFemale),  50, 200, ScaleMode::Div100, static_cast<int>(p.gender.sexSizeFemale * 100),  BASE_FLOCK, "%"});
 
     // Group: Pregnancy (Phase 1.5)
-    reg.reg({"\u598a\u5a20\u65f6\u957f (Duration)",          "pregnancy", HO_N(pregnancy, pregnancyDuration),   5,  120, ScaleMode::OneToOne, static_cast<int>(p.pregnancy.pregnancyDuration),   false});
-    reg.reg({"\u4ea7\u540e\u6062\u590d (Postpartum)",        "pregnancy", HO_N(pregnancy, postpartumRecovery), 10,  300, ScaleMode::OneToOne, static_cast<int>(p.pregnancy.postpartumRecovery), false});
-    reg.reg({"\u54fa\u4e73\u9971\u8179 (Nursing Boost)",     "pregnancy", HO_N(pregnancy, offspringHungerBoost), 0, 80, ScaleMode::Div100, static_cast<int>(p.pregnancy.offspringHungerBoost * 100), false});
+    reg.reg({"\u598a\u5a20\u65f6\u957f (Duration)",          "pregnancy", HO_N(pregnancy, pregnancyDuration),   5,  120, ScaleMode::OneToOne, static_cast<int>(p.pregnancy.pregnancyDuration),   BASE_FLOCK, "s"});
+    reg.reg({"\u4ea7\u540e\u6062\u590d (Postpartum)",        "pregnancy", HO_N(pregnancy, postpartumRecovery), 10,  300, ScaleMode::OneToOne, static_cast<int>(p.pregnancy.postpartumRecovery), BASE_FLOCK, "s"});
+    reg.reg({"\u54fa\u4e73\u9971\u8179 (Nursing Boost)",     "pregnancy", HO_N(pregnancy, offspringHungerBoost), 0, 80, ScaleMode::Div100, static_cast<int>(p.pregnancy.offspringHungerBoost * 100), BASE_FLOCK, "%"});
 
     // Group: Male Combat (Phase 2.1)
-    reg.reg({"\u5185\u6597\u534a\u5f84 (Combat Radius)",  "combat", HO_N(combat, combatRadius),       5,  150, ScaleMode::OneToOne, static_cast<int>(p.combat.combatRadius),       false});
-    reg.reg({"\u5185\u6597\u6982\u7387 (Probability)",    "combat", HO_N(combat, combatProbability),  5,  100, ScaleMode::Div100,  static_cast<int>(p.combat.combatProbability * 100), false});
-    reg.reg({"\u75b2\u52b3\u589e\u52a0 (Fatigue Gain)",   "combat", HO_N(combat, combatFatigueGain),  1,  50,  ScaleMode::Div100,  static_cast<int>(p.combat.combatFatigueGain * 100),  false});
-    reg.reg({"\u5185\u6597\u51b7\u5374 (Cooldown)",       "combat", HO_N(combat, combatCooldown),     1,  30,  ScaleMode::OneToOne, static_cast<int>(p.combat.combatCooldown),      false});
+    reg.reg({"\u5185\u6597\u534a\u5f84 (Combat Radius)",  "combat", HO_N(combat, combatRadius),       5,  150, ScaleMode::OneToOne, static_cast<int>(p.combat.combatRadius),       BASE_FLOCK, "px"});
+    reg.reg({"\u5185\u6597\u6982\u7387 (Probability)",    "combat", HO_N(combat, combatProbability),  5,  100, ScaleMode::Div100,  static_cast<int>(p.combat.combatProbability * 100), BASE_FLOCK, "%"});
+    reg.reg({"\u75b2\u52b3\u589e\u52a0 (Fatigue Gain)",   "combat", HO_N(combat, combatFatigueGain),  1,  50,  ScaleMode::Div100,  static_cast<int>(p.combat.combatFatigueGain * 100),  BASE_FLOCK, "/s"});
+    reg.reg({"\u5185\u6597\u51b7\u5374 (Cooldown)",       "combat", HO_N(combat, combatCooldown),     1,  30,  ScaleMode::OneToOne, static_cast<int>(p.combat.combatCooldown),      BASE_FLOCK, "s"});
 
     // Group: Hatred / Enmity (Phase 2.2)
-    reg.reg({"\u4ec7\u6068\u589e\u76ca (Gain per Kill)", "hatred", HO_N(hatred, hatredGainPerKill),       1,  80, ScaleMode::Div100,  static_cast<int>(p.hatred.hatredGainPerKill * 100),      false});
-    reg.reg({"\u4ec7\u6068\u8870\u51cf (Decay Rate)",   "hatred", HO_N(hatred, hatredDecayRate),        1,  20,  ScaleMode::Div100,  static_cast<int>(p.hatred.hatredDecayRate * 100),        false});
-    reg.reg({"\u9003\u8dd1\u8ddd\u79bb (Flee Radius)",    "hatred", HO_N(hatred, hatredFleeRadiusBoost), 1,  100, ScaleMode::Div10,   static_cast<int>(p.hatred.hatredFleeRadiusBoost * 10),   false});
-    reg.reg({"\u9003\u8dd1\u529b\u5ea6 (Flee Weight)",    "hatred", HO_N(hatred, hatredFleeWeightBoost), 1,  50,  ScaleMode::Div10,   static_cast<int>(p.hatred.hatredFleeWeightBoost * 10),   false});
+    reg.reg({"\u4ec7\u6068\u589e\u76ca (Gain per Kill)", "hatred", HO_N(hatred, hatredGainPerKill),       1,  80, ScaleMode::Div100,  static_cast<int>(p.hatred.hatredGainPerKill * 100),      BASE_FLOCK});
+    reg.reg({"\u4ec7\u6068\u8870\u51cf (Decay Rate)",   "hatred", HO_N(hatred, hatredDecayRate),        1,  20,  ScaleMode::Div100,  static_cast<int>(p.hatred.hatredDecayRate * 100),        BASE_FLOCK, "/s"});
+    reg.reg({"\u9003\u8dd1\u8ddd\u79bb (Flee Radius)",    "hatred", HO_N(hatred, hatredFleeRadiusBoost), 1,  100, ScaleMode::Div10,   static_cast<int>(p.hatred.hatredFleeRadiusBoost * 10),   BASE_FLOCK, "x"});
+    reg.reg({"\u9003\u8dd1\u529b\u5ea6 (Flee Weight)",    "hatred", HO_N(hatred, hatredFleeWeightBoost), 1,  50,  ScaleMode::Div10,   static_cast<int>(p.hatred.hatredFleeWeightBoost * 10),   BASE_FLOCK, "x"});
 
     // Group: Escape Strategy (Phase 2.3)
-    reg.reg({"\u9003\u8dd1\u7b56\u7565 (Strategy)",        "escape", HO_N(escape, escapeStrategy),     0,  3,   ScaleMode::OneToOne,  static_cast<int>(p.escape.escapeStrategy),   false});
-    reg.reg({"\u6df7\u5408\u5e45\u5ea6 (Mix Factor)",      "escape", HO_N(escape, escapeStrategyMix),  0,  100, ScaleMode::Div100,  static_cast<int>(p.escape.escapeStrategyMix * 100), false});
-    reg.reg({"\u4e4b\u5b57\u632f\u5e45 (Zigzag Amp)",      "escape", HO_N(escape, escapeZigzagAmp),   10,  100, ScaleMode::Div100,  static_cast<int>(p.escape.escapeZigzagAmp * 100), false});
+    reg.reg({"\u9003\u8dd1\u7b56\u7565 (Strategy)",        "escape", HO_N(escape, escapeStrategy),     0,  3,   ScaleMode::OneToOne,  static_cast<int>(p.escape.escapeStrategy),   BASE_FLOCK});
+    reg.reg({"\u6df7\u5408\u5e45\u5ea6 (Mix Factor)",      "escape", HO_N(escape, escapeStrategyMix),  0,  100, ScaleMode::Div100,  static_cast<int>(p.escape.escapeStrategyMix * 100), BASE_FLOCK, "%"});
+    reg.reg({"\u4e4b\u5b57\u632f\u5e45 (Zigzag Amp)",      "escape", HO_N(escape, escapeZigzagAmp),   10,  100, ScaleMode::Div100,  static_cast<int>(p.escape.escapeZigzagAmp * 100), BASE_FLOCK, "%"});
 
     // Group: Defensive Cooperation (Phase 2.4)
-    reg.reg({"\u9632\u5fa1\u534a\u5f84 (Defense Radius)",   "defense", HO_N(defense, defenseRadius),         50,  500, ScaleMode::OneToOne, static_cast<int>(p.defense.defenseRadius),         false});
-    reg.reg({"\u53cd\u51fb\u529b\u5ea6 (Response Weight)",   "defense", HO_N(defense, defenseResponseWeight), 5,   100, ScaleMode::Div100,  static_cast<int>(p.defense.defenseResponseWeight * 100),  false});
-    reg.reg({"\u7fa4\u4f53\u9608\u503c (Group Threshold)",   "defense", HO_N(defense, defenseGroupThreshold), 1,   10,  ScaleMode::OneToOne, static_cast<int>(p.defense.defenseGroupThreshold),   false});
+    reg.reg({"\u9632\u5fa1\u534a\u5f84 (Defense Radius)",   "defense", HO_N(defense, defenseRadius),         50,  500, ScaleMode::OneToOne, static_cast<int>(p.defense.defenseRadius),         BASE_FLOCK, "px"});
+    reg.reg({"\u53cd\u51fb\u529b\u5ea6 (Response Weight)",   "defense", HO_N(defense, defenseResponseWeight), 5,   100, ScaleMode::Div100,  static_cast<int>(p.defense.defenseResponseWeight * 100),  BASE_FLOCK, "%"});
+    reg.reg({"\u7fa4\u4f53\u9608\u503c (Group Threshold)",   "defense", HO_N(defense, defenseGroupThreshold), 1,   10,  ScaleMode::OneToOne, static_cast<int>(p.defense.defenseGroupThreshold),   BASE_FLOCK});
 
     // Group: Cohesion Dynamics (Phase 2.5)
-    reg.reg({"\u57fa\u7840\u6743\u91cd (Base Weight)",       "cohesionDyn", HO_N(cohesionDyn, cohesionBaseWeight),   10,  200, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionBaseWeight * 100),   false});
-    reg.reg({"\u5a01\u80c1\u589e\u76ca (Threat Boost)",      "cohesionDyn", HO_N(cohesionDyn, cohesionThreatBoost), 10,  400, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionThreatBoost * 100),  false});
-    reg.reg({"\u9965\u997f\u8870\u51cf (Hunger Decay)",      "cohesionDyn", HO_N(cohesionDyn, cohesionHungerDecay), 0,   100, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionHungerDecay * 100),   false});
-    reg.reg({"\u5bc6\u5ea6\u8870\u51cf (Density Decay)",     "cohesionDyn", HO_N(cohesionDyn, cohesionDensityDecay), 0,  100, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionDensityDecay * 100), false});
+    reg.reg({"\u57fa\u7840\u6743\u91cd (Base Weight)",       "cohesionDyn", HO_N(cohesionDyn, cohesionBaseWeight),   10,  200, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionBaseWeight * 100),   BASE_FLOCK, "%"});
+    reg.reg({"\u5a01\u80c1\u589e\u76ca (Threat Boost)",      "cohesionDyn", HO_N(cohesionDyn, cohesionThreatBoost), 10,  400, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionThreatBoost * 100),  BASE_FLOCK, "x"});
+    reg.reg({"\u9965\u997f\u8870\u51cf (Hunger Decay)",      "cohesionDyn", HO_N(cohesionDyn, cohesionHungerDecay), 0,   100, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionHungerDecay * 100),   BASE_FLOCK, "%"});
+    reg.reg({"\u5bc6\u5ea6\u8870\u51cf (Density Decay)",     "cohesionDyn", HO_N(cohesionDyn, cohesionDensityDecay), 0,  100, ScaleMode::Div100,  static_cast<int>(p.cohesionDyn.cohesionDensityDecay * 100), BASE_FLOCK, "%"});
 
     // Group: Health / Dodge / Damage (Phase 1.7)
-    reg.reg({"\u57fa\u7840\u95ea\u907f\u7387 (Dodge Base)",         "health", HO_N(health, dodgeChanceBase),  0,   80,  ScaleMode::Div100,  static_cast<int>(p.health.dodgeChanceBase * 100),  false});
-    reg.reg({"\u4f24\u5bb3\u7cfb\u6570 (Damage Multiplier)",       "health", HO_N(health, damageToHealth),   10,  100, ScaleMode::Div100,  static_cast<int>(p.health.damageToHealth * 100),   false});
-    reg.reg({"\u56de\u8840\u901f\u5ea6 (Health Regen)",            "health", HO_N(health, healthRegenRate),  0,   50,  ScaleMode::Div1000, static_cast<int>(p.health.healthRegenRate * 1000), false});
-    reg.reg({"\u521d\u59cb\u751f\u547d (Initial Health)",         "health", HO_N(health, healthInitial),    50,  100, ScaleMode::Div100,  static_cast<int>(p.health.healthInitial * 100),    false});
+    reg.reg({"\u57fa\u7840\u95ea\u907f\u7387 (Dodge Base)",         "health", HO_N(health, dodgeChanceBase),  0,   80,  ScaleMode::Div100,  static_cast<int>(p.health.dodgeChanceBase * 100),  BASE_FLOCK, "%"});
+    reg.reg({"\u4f24\u5bb3\u7cfb\u6570 (Damage Multiplier)",       "health", HO_N(health, damageToHealth),   10,  100, ScaleMode::Div100,  static_cast<int>(p.health.damageToHealth * 100),   BASE_FLOCK, "%"});
+    reg.reg({"\u56de\u8840\u901f\u5ea6 (Health Regen)",            "health", HO_N(health, healthRegenRate),  0,   50,  ScaleMode::Div1000, static_cast<int>(p.health.healthRegenRate * 1000), BASE_FLOCK, "/s"});
+    reg.reg({"\u521d\u59cb\u751f\u547d (Initial Health)",         "health", HO_N(health, healthInitial),    50,  100, ScaleMode::Div100,  static_cast<int>(p.health.healthInitial * 100),    BASE_FLOCK, "%"});
 
     // Nest preference params (Phase 3.1)
-    reg.reg({"\u5de2\u7a74\u56de\u5f52\u6743\u91cd (Nest Return)",      "nestPref", HO_N(nestPref, nestReturnWeight),      0,  100, ScaleMode::Div100,  static_cast<int>(p.nestPref.nestReturnWeight * 100),    true});
-    reg.reg({"\u5de2\u7a74\u98df\u7269\u504f\u597d (Food Prefer)",      "nestPref", HO_N(nestPref, nestPreferFoodDensity), 0,  100, ScaleMode::Div100,  static_cast<int>(p.nestPref.nestPreferFoodDensity * 100), false});
-    reg.reg({"\u5de2\u7a74\u5b89\u5168\u504f\u597d (Safety Prefer)",    "nestPref", HO_N(nestPref, nestPreferSafety),      0,  100, ScaleMode::Div100,  static_cast<int>(p.nestPref.nestPreferSafety * 100),      false});
-    reg.reg({"\u5de2\u7a74\u9009\u5740\u8303\u56f4 (Selection Range)",  "nestPref", HO_N(nestPref, nestSelectionRange),    50, 500, ScaleMode::OneToOne, static_cast<int>(p.nestPref.nestSelectionRange),           false});
+    reg.reg({"\u5de2\u7a74\u56de\u5f52\u6743\u91cd (Nest Return)",      "nestPref", HO_N(nestPref, nestReturnWeight),      0,  100, ScaleMode::Div100,  static_cast<int>(p.nestPref.nestReturnWeight * 100),    BASE_PLANT, "%"});
+    reg.reg({"\u5de2\u7a74\u98df\u7269\u504f\u597d (Food Prefer)",      "nestPref", HO_N(nestPref, nestPreferFoodDensity), 0,  100, ScaleMode::Div100,  static_cast<int>(p.nestPref.nestPreferFoodDensity * 100), BASE_FLOCK, "%"});
+    reg.reg({"\u5de2\u7a74\u5b89\u5168\u504f\u597d (Safety Prefer)",    "nestPref", HO_N(nestPref, nestPreferSafety),      0,  100, ScaleMode::Div100,  static_cast<int>(p.nestPref.nestPreferSafety * 100),      BASE_FLOCK, "%"});
+    reg.reg({"\u5de2\u7a74\u9009\u5740\u8303\u56f4 (Selection Range)",  "nestPref", HO_N(nestPref, nestSelectionRange),    50, 500, ScaleMode::OneToOne, static_cast<int>(p.nestPref.nestSelectionRange),           BASE_FLOCK, "px"});
 
     // Plant params
-    reg.reg({"\u6700\u5927\u6570\u91cf (Max Plants)",          "plants", PO(maxPlants),       10,  500, ScaleMode::OneToOne,  static_cast<int>(pp.maxPlants),  false});
-    reg.reg({"\u8fdb\u98df\u8303\u56f4 (Eat Range)",           "plants", PO(eatRange),        5,   100, ScaleMode::OneToOne,  static_cast<int>(pp.eatRange),      true});
-    reg.reg({"\u690d\u7269\u98df\u7269\u503c (Food Value)",     "plants", PO(plantFoodValue),  10,  100, ScaleMode::Div100,  static_cast<int>(pp.plantFoodValue * 100), true});
-    reg.reg({"\u751f\u957f\u65f6\u95f4 (Growth Time)",         "plants", PO(growthTime),      10,  200, ScaleMode::OneToOne,  static_cast<int>(pp.growthTime),    true});
-    reg.reg({"\u6269\u6563\u6982\u7387 (Spread Chance)",       "plants", PO(spreadChance),    0,   100, ScaleMode::Div1000,  static_cast<int>(pp.spreadChance * 1000), true});
-    reg.reg({"\u6269\u6563\u8303\u56f4 (Spread Range)",        "plants", PO(spreadRange),     20,  300, ScaleMode::OneToOne,  static_cast<int>(pp.spreadRange),   true});
-    reg.reg({"\u5b63\u8282\u957f\u5ea6 (Season Length)",       "plants", PO(seasonLength),    10,  300, ScaleMode::OneToOne,  static_cast<int>(pp.seasonLength),  true});
-    reg.reg({"\u80a5\u6c83\u534a\u5f84 (Fertilize Radius)",    "plants", PO(fertilizeRadius), 20,  200, ScaleMode::OneToOne,  static_cast<int>(pp.fertilizeRadius), true});
-    reg.reg({"\u80a5\u6c83\u589e\u5e45 (Fertilize Boost)",     "plants", PO(fertilizeBoost),  5,   80,  ScaleMode::Div100,   static_cast<int>(pp.fertilizeBoost * 100), true});
-    reg.reg({"\u627f\u8f7d\u538b\u529b (Carrying Pressure)",   "plants", PO(carryingPressure), 0,  100, ScaleMode::Div100,   static_cast<int>(pp.carryingPressure * 100), true});
+    reg.reg({"\u6700\u5927\u6570\u91cf (Max Plants)",          "plants", PO(maxPlants),       10,  500, ScaleMode::OneToOne,  static_cast<int>(pp.maxPlants),  BASE_PLANT});
+    reg.reg({"\u8fdb\u98df\u8303\u56f4 (Eat Range)",           "plants", PO(eatRange),        5,   100, ScaleMode::OneToOne,  static_cast<int>(pp.eatRange),      BASE_PLANT, "px"});
+    reg.reg({"\u690d\u7269\u98df\u7269\u503c (Food Value)",     "plants", PO(plantFoodValue),  10,  100, ScaleMode::Div100,  static_cast<int>(pp.plantFoodValue * 100), BASE_PLANT, "%"});
+    reg.reg({"\u751f\u957f\u65f6\u95f4 (Growth Time)",         "plants", PO(growthTime),      10,  200, ScaleMode::OneToOne,  static_cast<int>(pp.growthTime),    BASE_PLANT, "s"});
+    reg.reg({"\u6269\u6563\u6982\u7387 (Spread Chance)",       "plants", PO(spreadChance),    0,   100, ScaleMode::Div1000,  static_cast<int>(pp.spreadChance * 1000), BASE_PLANT, "%"});
+    reg.reg({"\u6269\u6563\u8303\u56f4 (Spread Range)",        "plants", PO(spreadRange),     20,  300, ScaleMode::OneToOne,  static_cast<int>(pp.spreadRange),   BASE_PLANT, "px"});
+    reg.reg({"\u5b63\u8282\u957f\u5ea6 (Season Length)",       "plants", PO(seasonLength),    10,  300, ScaleMode::OneToOne,  static_cast<int>(pp.seasonLength),  BASE_PLANT, "s"});
+    reg.reg({"\u80a5\u6c83\u534a\u5f84 (Fertilize Radius)",    "plants", PO(fertilizeRadius), 20,  200, ScaleMode::OneToOne,  static_cast<int>(pp.fertilizeRadius), BASE_PLANT, "px"});
+    reg.reg({"\u80a5\u6c83\u589e\u5e45 (Fertilize Boost)",     "plants", PO(fertilizeBoost),  5,   80,  ScaleMode::Div100,   static_cast<int>(pp.fertilizeBoost * 100), BASE_PLANT, "%"});
+    reg.reg({"\u627f\u8f7d\u538b\u529b (Carrying Pressure)",   "plants", PO(carryingPressure), 0,  100, ScaleMode::Div100,   static_cast<int>(pp.carryingPressure * 100), BASE_PLANT, "%"});
 
     // Global nest params (Phase 3.1)
     const NestParams& np = sim.nestParams();
-    reg.reg({"\u521d\u59cb\u5de2\u7a74\u6570 (Initial Nests)",       "nest", NO(initialNests),      0,  50,  ScaleMode::OneToOne,  static_cast<int>(np.initialNests),    false});
-    reg.reg({"\u5de2\u7a74\u9886\u5730\u534a\u5f84 (Nest Radius)",   "nest", NO(nestRadius),        50, 500, ScaleMode::OneToOne,  static_cast<int>(np.nestRadius),      true});
-    reg.reg({"\u56de\u8840\u52a0\u6210 (Health Boost)",              "nest", NO(nestHealthBoost),   100,500, ScaleMode::Div100,   static_cast<int>(np.nestHealthBoost * 100), true});
-    reg.reg({"\u98df\u7269\u5b58\u50a8\u901f\u7387 (Food Storage)",  "nest", NO(nestFoodStorageRate),0,  20,  ScaleMode::Div1000,  static_cast<int>(np.nestFoodStorageRate * 1000), true});
-    reg.reg({"\u4e89\u593a\u65f6\u957f (Contest Duration)",          "nest", NO(contestDuration),   5,  60,  ScaleMode::OneToOne,  static_cast<int>(np.contestDuration),  false});
-    reg.reg({"\u5b88\u536b\u95e8\u69db (Defense Threshold)",         "nest", NO(defenseThreshold),  1,  20,  ScaleMode::OneToOne,  static_cast<int>(np.defenseThreshold), false});
+    reg.reg({"\u521d\u59cb\u5de2\u7a74\u6570 (Initial Nests)",       "nest", NO(initialNests),      0,  50,  ScaleMode::OneToOne,  static_cast<int>(np.initialNests),    BASE_NEST});
+    reg.reg({"\u5de2\u7a74\u9886\u5730\u534a\u5f84 (Nest Radius)",   "nest", NO(nestRadius),        50, 500, ScaleMode::OneToOne,  static_cast<int>(np.nestRadius),      BASE_NEST, "px"});
+    reg.reg({"\u56de\u8840\u52a0\u6210 (Health Boost)",              "nest", NO(nestHealthBoost),   100,500, ScaleMode::Div100,   static_cast<int>(np.nestHealthBoost * 100), BASE_NEST, "%"});
+    reg.reg({"\u98df\u7269\u5b58\u50a8\u901f\u7387 (Food Storage)",  "nest", NO(nestFoodStorageRate),0,  20,  ScaleMode::Div1000,  static_cast<int>(np.nestFoodStorageRate * 1000), BASE_NEST, "/s"});
+    reg.reg({"\u4e89\u593a\u65f6\u957f (Contest Duration)",          "nest", NO(contestDuration),   5,  60,  ScaleMode::OneToOne,  static_cast<int>(np.contestDuration),  BASE_NEST, "s"});
+    reg.reg({"\u5b88\u536b\u95e8\u69db (Defense Threshold)",         "nest", NO(defenseThreshold),  1,  20,  ScaleMode::OneToOne,  static_cast<int>(np.defenseThreshold), BASE_NEST, "x"});
 
     // ================================================================
     // Build tabs
@@ -396,15 +421,15 @@ void MainWindow::setupUI()
     // Tab 0: Behavior (Reynolds + Movement + Perception)
     {
         auto* lay = makeTab("Behavior");
-        auto* box1 = reg.buildGroup("reynolds", groupStyle, &p, &pp, this);
+        auto* box1 = reg.buildGroup("reynolds", groupStyle, &p, &pp, nullptr, this);
         box1->setTitle("Reynolds \u7fa4\u4f53\u89c4\u5219");
         lay->addWidget(box1);
 
-        auto* box2 = reg.buildGroup("movement", groupStyle, &p, &pp, this);
+        auto* box2 = reg.buildGroup("movement", groupStyle, &p, &pp, nullptr, this);
         box2->setTitle("\u79fb\u52a8\u4e0e\u78b0\u649e (Movement \u0026 Collision)");
         lay->addWidget(box2);
 
-        auto* box3 = reg.buildGroup("perception", groupStyle, &p, &pp, this);
+        auto* box3 = reg.buildGroup("perception", groupStyle, &p, &pp, nullptr, this);
         box3->setTitle("\u611f\u77e5\u534a\u5f84 (Perception)");
         lay->addWidget(box3);
 
@@ -420,15 +445,15 @@ void MainWindow::setupUI()
     // Tab 1: Interaction (Predation + Inter-Flock + Foraging)
     {
         auto* lay = makeTab("Interaction");
-        auto* box1 = reg.buildGroup("predation", groupStyle, &p, &pp, this);
+        auto* box1 = reg.buildGroup("predation", groupStyle, &p, &pp, nullptr, this);
         box1->setTitle("\u6355\u730e\u4e0e\u9003\u79bb (Predation & Escape)");
         lay->addWidget(box1);
 
-        auto* box2 = reg.buildGroup("interflock", groupStyle, &p, &pp, this);
+        auto* box2 = reg.buildGroup("interflock", groupStyle, &p, &pp, nullptr, this);
         box2->setTitle("\u7fa4\u95f4\u884c\u4e3a (Inter-Flock)");
         lay->addWidget(box2);
 
-        auto* box3 = reg.buildGroup("forage", groupStyle, &p, &pp, this);
+        auto* box3 = reg.buildGroup("forage", groupStyle, &p, &pp, nullptr, this);
         box3->setTitle("\u89c5\u98df\u884c\u4e3a (Foraging)");
         lay->addWidget(box3);
 
@@ -439,59 +464,59 @@ void MainWindow::setupUI()
     // Phase 1 will add Fatigue, Gender here
     {
         auto* lay = makeTab("Lifecycle");
-        auto* box1 = reg.buildGroup("hunger", groupStyle, &p, &pp, this);
+        auto* box1 = reg.buildGroup("hunger", groupStyle, &p, &pp, nullptr, this);
         box1->setTitle("\u9965\u997f\u4e0e\u9971\u8179 (Hunger & Satiety)");
         lay->addWidget(box1);
 
-        auto* box2 = reg.buildGroup("repro", groupStyle, &p, &pp, this);
+        auto* box2 = reg.buildGroup("repro", groupStyle, &p, &pp, nullptr, this);
         box2->setTitle("\u7fa4\u4f53\u7e41\u884d (Reproduction)");
         lay->addWidget(box2);
 
-        auto* boxPreg = reg.buildGroup("pregnancy", groupStyle, &p, &pp, this);
+        auto* boxPreg = reg.buildGroup("pregnancy", groupStyle, &p, &pp, nullptr, this);
         boxPreg->setTitle("\u598a\u5a20\u4e0e\u54fa\u4e73 (Pregnancy & Nursing)");
         lay->addWidget(boxPreg);
 
-        auto* box3 = reg.buildGroup("age", groupStyle, &p, &pp, this);
+        auto* box3 = reg.buildGroup("age", groupStyle, &p, &pp, nullptr, this);
         box3->setTitle("\u5e74\u9f84\u4e0e\u5bff\u547d (Age & Lifespan)");
         lay->addWidget(box3);
 
-        auto* box4 = reg.buildGroup("bodysize", groupStyle, &p, &pp, this);
+        auto* box4 = reg.buildGroup("bodysize", groupStyle, &p, &pp, nullptr, this);
         box4->setTitle("\u4f53\u578b\u5927\u5c0f (Body Size)");
         lay->addWidget(box4);
 
-        auto* box5 = reg.buildGroup("fatigue", groupStyle, &p, &pp, this);
+        auto* box5 = reg.buildGroup("fatigue", groupStyle, &p, &pp, nullptr, this);
         box5->setTitle("\u75b2\u52b3\u7cfb\u7edf (Fatigue)");
         lay->addWidget(box5);
 
-        auto* box6 = reg.buildGroup("gender", groupStyle, &p, &pp, this);
+        auto* box6 = reg.buildGroup("gender", groupStyle, &p, &pp, nullptr, this);
         box6->setTitle("\u6027\u522b\u4e8c\u6001 (Gender Dimorphism)");
         lay->addWidget(box6);
 
-        auto* boxCombat = reg.buildGroup("combat", groupStyle, &p, &pp, this);
+        auto* boxCombat = reg.buildGroup("combat", groupStyle, &p, &pp, nullptr, this);
         boxCombat->setTitle("\u96c4\u6027\u5185\u6597 (Male Combat)");
         lay->addWidget(boxCombat);
 
-        auto* boxHatred = reg.buildGroup("hatred", groupStyle, &p, &pp, this);
+        auto* boxHatred = reg.buildGroup("hatred", groupStyle, &p, &pp, nullptr, this);
         boxHatred->setTitle("\u4ec7\u6068\u7cfb\u7edf (Hatred / Enmity)");
         lay->addWidget(boxHatred);
 
-        auto* boxEscape = reg.buildGroup("escape", groupStyle, &p, &pp, this);
+        auto* boxEscape = reg.buildGroup("escape", groupStyle, &p, &pp, nullptr, this);
         boxEscape->setTitle("\u9003\u8dd1\u7b56\u7565 (Escape Strategy)");
         lay->addWidget(boxEscape);
 
-        auto* boxDefense = reg.buildGroup("defense", groupStyle, &p, &pp, this);
+        auto* boxDefense = reg.buildGroup("defense", groupStyle, &p, &pp, nullptr, this);
         boxDefense->setTitle("\u9632\u5fa1\u534f\u4f5c (Defensive Cooperation)");
         lay->addWidget(boxDefense);
 
-        auto* boxCohDyn = reg.buildGroup("cohesionDyn", groupStyle, &p, &pp, this);
+        auto* boxCohDyn = reg.buildGroup("cohesionDyn", groupStyle, &p, &pp, nullptr, this);
         boxCohDyn->setTitle("\u51dd\u805a\u529b\u52a8\u6001 (Cohesion Dynamics)");
         lay->addWidget(boxCohDyn);
 
-        auto* boxHealth = reg.buildGroup("health", groupStyle, &p, &pp, this);
+        auto* boxHealth = reg.buildGroup("health", groupStyle, &p, &pp, nullptr, this);
         boxHealth->setTitle("\u751f\u547d\u4e0e\u6218\u6597 (Health & Combat)");
         lay->addWidget(boxHealth);
 
-        auto* boxNestPref = reg.buildGroup("nestPref", groupStyle, &p, &pp, this);
+        auto* boxNestPref = reg.buildGroup("nestPref", groupStyle, &p, &pp, nullptr, this);
         boxNestPref->setTitle("\u5de2\u7a74\u504f\u597d (Nest Preference)");
         lay->addWidget(boxNestPref);
 
@@ -672,7 +697,7 @@ void MainWindow::setupUI()
     {
         auto* lay = makeTab("World");
 
-        auto* box1 = reg.buildGroup("boundary", groupStyle, &p, &pp, this);
+        auto* box1 = reg.buildGroup("boundary", groupStyle, &p, &pp, nullptr, this);
         box1->setTitle("\u8fb9\u754c\u4e0e\u6e38\u8361 (Boundary & Wander)");
         lay->addWidget(box1);
 
@@ -710,12 +735,12 @@ void MainWindow::setupUI()
         lay->addSpacing(6);
 
         // Plants
-        auto* box2 = reg.buildGroup("plants", groupStyle, &p, &pp, this);
+        auto* box2 = reg.buildGroup("plants", groupStyle, &p, &pp, nullptr, this);
         box2->setTitle("\u690d\u7269\u751f\u6001 (Plant Ecology)");
         lay->addWidget(box2);
 
         // Nest global params (Phase 3.1)
-        auto* boxNest = reg.buildGroup("nest", groupStyle, &p, &pp, this);
+        auto* boxNest = reg.buildGroup("nest", groupStyle, &p, &pp, &np, this);
         boxNest->setTitle("\u5de2\u7a74\u7cfb\u7edf (Nest System)");
         lay->addWidget(boxNest);
 
@@ -784,9 +809,10 @@ void MainWindow::setupUI()
     // ================================================================
     reg.connectAll([this](const ParamDef* def, float val) {
         auto& sim = m_glWidget->simulation();
-        void* base = def->isPlantParam
-            ? static_cast<void*>(&sim.plantParams())
-            : static_cast<void*>(&sim.params());
+        void* base = nullptr;
+        if (def->paramBase == BASE_FLOCK)      base = static_cast<void*>(&sim.params());
+        else if (def->paramBase == BASE_PLANT) base = static_cast<void*>(&sim.plantParams());
+        else if (def->paramBase == BASE_NEST)  base = static_cast<void*>(&sim.nestParams());
         def->writeTo(base, val);
         if (def->onChanged) def->onChanged(val);
     });
@@ -798,7 +824,7 @@ void MainWindow::setupUI()
 void MainWindow::refreshSliders()
 {
     auto& sim = m_glWidget->simulation();
-    m_params.refresh(&sim.params(), &sim.plantParams());
+    m_params.refresh(&sim.params(), &sim.plantParams(), &sim.nestParams());
 
     // Season label
     int season = sim.currentSeason();
@@ -1468,6 +1494,13 @@ void MainWindow::rebuildRelationshipUI()
             connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
                     [this, vi, vj](int idx) {
                 m_glWidget->simulation().setRelationship(vi, vj, static_cast<FlockRelation>(idx));
+                // Refresh reciprocal combo to reflect bidirectional change
+                if (vi != vj && m_relCombos[vj][vi]) {
+                    m_relCombos[vj][vi]->blockSignals(true);
+                    m_relCombos[vj][vi]->setCurrentIndex(
+                        static_cast<int>(m_glWidget->simulation().relationship(vj, vi)));
+                    m_relCombos[vj][vi]->blockSignals(false);
+                }
             });
             rowLayout->addWidget(combo);
             m_relCombos[i][j] = combo;

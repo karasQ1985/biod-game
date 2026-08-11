@@ -29,6 +29,16 @@ public:
     void setBoidCount(int count);
     int boidCount() const { return m_sim.data().count; }
 
+    // Configure world before initializeGL (called from MainWindow after WorldSetupDialog)
+    void configureWorld(float worldW, float worldH,
+                        int boundaryMode, float latitude,
+                        float waterPct, float forestPct, float grasslandPct,
+                        float desertPct, float tundraPct,
+                        float mountainPct, float wetlandPct);
+
+    // Resize world dimensions (preserves flock configs, regenerates entities)
+    void resizeWorld(float worldW, float worldH);
+
     // Snapshot current performance stats (thread-safe: called from UI timer)
     PerfStats perfStats() const { return m_perfSnapshot; }
 

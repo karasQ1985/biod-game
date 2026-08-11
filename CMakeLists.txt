@@ -28,6 +28,7 @@ set(SOURCES
     src/renderer/Renderer.cpp
     src/ui/GLWidget.cpp
     src/ui/MainWindow.cpp
+    src/ui/WorldSetupDialog.cpp
 )
 
 set(HEADERS
@@ -40,6 +41,7 @@ set(HEADERS
     src/renderer/Renderer.h
     src/ui/GLWidget.h
     src/ui/MainWindow.h
+    src/ui/WorldSetupDialog.h
 )
 
 add_executable(Biod ${SOURCES} ${HEADERS})

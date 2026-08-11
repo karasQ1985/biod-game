@@ -16,6 +16,7 @@ QGroupBox* ParamRegistry::buildGroup(const char* groupKey,
                                       const QString& groupStyle,
                                       const void* initialBaseFlock,
                                       const void* initialBasePlant,
+                                      const void* initialBaseNest,
                                       QWidget* parent) {
     // Collect all defs for this group
     std::vector<int> indices;
@@ -41,7 +42,10 @@ QGroupBox* ParamRegistry::buildGroup(const char* groupKey,
         b.def = &def;
 
         // Choose initial base
-        const void* base = def.isPlantParam ? initialBasePlant : initialBaseFlock;
+        const void* base = nullptr;
+        if (def.paramBase == BASE_FLOCK)      base = initialBaseFlock;
+        else if (def.paramBase == BASE_PLANT) base = initialBasePlant;
+        else if (def.paramBase == BASE_NEST)  base = initialBaseNest;
         int initVal = (base != nullptr) ? def.floatToSlider(def.readFrom(base))
                                         : def.initialSliderVal;
         float initFloat = def.sliderToFloat(initVal);
@@ -60,10 +64,13 @@ QGroupBox* ParamRegistry::buildGroup(const char* groupKey,
         b.valueLabel = new QLabel();
         b.valueLabel->setStyleSheet("color: #aaa; font-size: 11px; font-weight: bold; min-width: 40px;");
         b.valueLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        if (decimals == 0)
-            b.valueLabel->setText(QString::number(static_cast<int>(initFloat)));
-        else
-            b.valueLabel->setText(QString::number(initFloat, 'f', decimals));
+        {
+            QString unitStr = def.unit ? QString(" %1").arg(def.unit) : QString();
+            if (decimals == 0)
+                b.valueLabel->setText(QString("%1%2").arg(static_cast<int>(initFloat)).arg(unitStr));
+            else
+                b.valueLabel->setText(QString("%1%2").arg(QString::number(initFloat, 'f', decimals)).arg(unitStr));
+        }
         row->addWidget(b.valueLabel);
 
         layout->addLayout(row);
@@ -108,31 +115,33 @@ QGroupBox* ParamRegistry::buildGroup(const char* groupKey,
         // ---- Update value label + tooltip on slider change ----
         QObject::connect(sl, &QSlider::valueChanged, [sl, defPtr, valLbl, decimals](int v) {
             float fv = defPtr->sliderToFloat(v);
+            QString unitStr = defPtr->unit ? QString(" %1").arg(defPtr->unit) : QString();
             // Update persistent value label
             if (decimals == 0)
-                valLbl->setText(QString::number(static_cast<int>(fv)));
+                valLbl->setText(QString("%1%2").arg(static_cast<int>(fv)).arg(unitStr));
             else
-                valLbl->setText(QString::number(fv, 'f', decimals));
+                valLbl->setText(QString("%1%2").arg(QString::number(fv, 'f', decimals)).arg(unitStr));
             // Update tooltip
             QString name = QString::fromUtf8(defPtr->nameCN);
             int colon = name.indexOf(':');
             if (colon > 0) name = name.left(colon);
             if (decimals == 0)
-                name += QString(" = %1").arg(static_cast<int>(fv));
+                name += QString(" = %1%2").arg(static_cast<int>(fv)).arg(unitStr);
             else
-                name += QString(" = %1").arg(fv, 0, 'f', decimals);
+                name += QString(" = %1%2").arg(fv, 0, 'f', decimals).arg(unitStr);
             sl->setToolTip(name);
         });
 
         // Set initial tooltip
         {
+            QString unitStr = def.unit ? QString(" %1").arg(def.unit) : QString();
             QString initName = QString::fromUtf8(def.nameCN);
             int colon = initName.indexOf(':');
             if (colon > 0) initName = initName.left(colon);
             if (decimals == 0)
-                initName += QString(" = %1").arg(static_cast<int>(initFloat));
+                initName += QString(" = %1%2").arg(static_cast<int>(initFloat)).arg(unitStr);
             else
-                initName += QString(" = %1").arg(initFloat, 0, 'f', decimals);
+                initName += QString(" = %1%2").arg(initFloat, 0, 'f', decimals).arg(unitStr);
             sl->setToolTip(initName);
         }
     }
@@ -141,10 +150,13 @@ QGroupBox* ParamRegistry::buildGroup(const char* groupKey,
     return box;
 }
 
-void ParamRegistry::refresh(const void* flockBase, const void* plantBase) {
+void ParamRegistry::refresh(const void* flockBase, const void* plantBase, const void* nestBase) {
     for (auto& b : m_bindings) {
         if (!b.slider || !b.def) continue;
-        const void* base = b.def->isPlantParam ? plantBase : flockBase;
+        const void* base = nullptr;
+        if (b.def->paramBase == BASE_FLOCK)      base = flockBase;
+        else if (b.def->paramBase == BASE_PLANT) base = plantBase;
+        else if (b.def->paramBase == BASE_NEST)  base = nestBase;
         int newVal = b.def->floatToSlider(b.def->readFrom(base));
         b.slider->blockSignals(true);
         b.slider->setValue(newVal);
@@ -154,10 +166,11 @@ void ParamRegistry::refresh(const void* flockBase, const void* plantBase) {
         if (b.valueLabel) {
             float fv = b.def->sliderToFloat(newVal);
             int dec = b.def->displayDecimals();
+            QString unitStr = b.def->unit ? QString(" %1").arg(b.def->unit) : QString();
             if (dec == 0)
-                b.valueLabel->setText(QString::number(static_cast<int>(fv)));
+                b.valueLabel->setText(QString("%1%2").arg(static_cast<int>(fv)).arg(unitStr));
             else
-                b.valueLabel->setText(QString::number(fv, 'f', dec));
+                b.valueLabel->setText(QString("%1%2").arg(QString::number(fv, 'f', dec)).arg(unitStr));
         }
     }
 }

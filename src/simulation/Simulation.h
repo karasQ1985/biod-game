@@ -12,6 +12,23 @@
 // Kill pair for predation tracking (needs to persist between simulation sub-steps)
 struct KillPair { int predatorIdx; int preyIdx; };
 
+// Phase 3.4: Mouse disturbance source types
+enum class DisturbanceType : uint8_t {
+    REPEL    = 0,  // Scare boids away from click point
+    ATTRACT  = 1,  // Lure boids toward click point
+};
+
+// Phase 3.4: Disturbance source -- space-time point entity with decay
+struct DisturbanceSource {
+    float posX = 0.0f;
+    float posY = 0.0f;
+    float strength = 1.0f;       // [0, 1], linearly decays to 0
+    float radius = 150.0f;       // WorldUnit effect radius
+    DisturbanceType type = DisturbanceType::REPEL;
+
+    bool expired() const { return strength <= 0.0f; }
+};
+
 // Core simulation: Reynolds flocking (separation, alignment, cohesion)
 // with spatial hashing for O(n) neighbor search.
 // Supports dynamic flock count (2-12) with per-flock parameters and predator-prey relationships.
@@ -48,6 +65,7 @@ public:
     ~Simulation();
 
     void init(float worldW, float worldH, int maxBoids);
+    void resizeWorld(float worldW, float worldH);  // Resize without clearing flock configs
     void update(float dt);
 
     void addBoid(float x, float y);
@@ -56,6 +74,7 @@ public:
 
     void setTarget(float x, float y);
     void clearTarget();
+    void addDisturbance(float x, float y, DisturbanceType type);
 
     void updateGrid();
 
@@ -114,6 +133,8 @@ public:
     const PlantParams& plantParams() const { return m_plantParams; }
     NestParams& nestParams() { return m_nestParams; }
     const NestParams& nestParams() const { return m_nestParams; }
+    const std::vector<DisturbanceSource>& disturbances() const { return m_disturbances; }
+    int disturbanceCount() const { return static_cast<int>(m_disturbances.size()); }
     NestData& nests() { return m_nests; }
     const NestData& nests() const { return m_nests; }
     const std::vector<float>& flockColorR() const { return m_flockColorR; }
@@ -176,6 +197,9 @@ private:
     float m_targetY;
     float m_targetTime = -1e9f;   // simTime when target was last set (for auto-clear)
 
+    // Phase 3.4: Active disturbance sources
+    std::vector<DisturbanceSource> m_disturbances;
+
     // Pre-allocated working buffers
     std::vector<float> m_forceX;
     std::vector<float> m_forceY;
@@ -199,6 +223,9 @@ private:
     void updatePlants(float dt);
     void updateNests(float dt);
     void updateReproduction(float dt);
+    void decayBoidMemories(float dt);
+    void updateDisturbances(float dt);
+    void updateSanity(float dt);
 
     // Modular sub-steps of update() (P5: Simulation modularization)
     void stepHunger(float dt);
