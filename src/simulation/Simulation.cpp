@@ -1660,7 +1660,7 @@ int Simulation::spawnRandom(int count)
 void Simulation::setGlobalFlockCap(int cap)
 {
     if (cap < 1) cap = 1;
-    if (cap > 2000) cap = 2000;
+    if (cap > 5000) cap = 5000;
     for (auto& fp : m_flockParams)
         fp.reproduction.maxFlockSize = cap;
     m_params.reproduction.maxFlockSize = cap;  // keep editor copy in sync

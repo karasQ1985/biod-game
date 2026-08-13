@@ -195,7 +195,7 @@ void GLWidget::configureWorld(float worldW, float worldH,
                               float desertPct, float tundraPct,
                               float mountainPct, float wetlandPct)
 {
-    m_sim.init(worldW, worldH, 10000);
+    m_sim.init(worldW, worldH, 20000);
     m_sim.globalParams().boundaryMode = static_cast<BoundaryMode>(boundaryMode);
 
     // Pass terrain configuration to renderer

@@ -5,7 +5,7 @@
 
 // Plant growth/scatter parameters (global, not per-flock)
 struct PlantParams {
-    float maxPlants = 200.0f;
+    float maxPlants = 689.0f;
     float initialPlants = 80.0f;
     float eatRange = 18.0f;        // How close a boid must be to eat (pixels)
     float plantFoodValue = 0.6f;   // Hunger restored by a fully-grown plant (0.0-1.0)

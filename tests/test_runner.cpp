@@ -1350,6 +1350,567 @@ void test_day_night_cycle() {
     }
 }
 
+// Phase 3.2: Memory system unit tests
+void test_memory_system() {
+    TEST_SUITE("Phase 3.2: Memory system");
+
+    // Setup: create a small boid population for testing
+    FlockData data;
+    data.reserve(32);
+    data.add(100.0f, 200.0f, 0.0f, 0.0f, 0, 0.8f, 0.3f, 0.3f);
+    data.add(500.0f, 600.0f, 0.0f, 0.0f, 1, 0.3f, 0.5f, 0.8f);
+    int bA = 0, bB = 1;
+
+    // Build decay rate table matching MemorySuf defaults
+    const int EVT_COUNT = static_cast<int>(MemoryEvent::COUNT);
+    float decayRates[6];
+    decayRates[static_cast<int>(MemoryEvent::PREDATOR_SIGHTING)] = 0.05f * 0.3f;  // 0.015
+    decayRates[static_cast<int>(MemoryEvent::PREY_SIGHTING)]     = 0.05f * 1.0f;  // 0.05
+    decayRates[static_cast<int>(MemoryEvent::FOOD_SOURCE)]       = 0.05f * 1.0f;  // 0.05
+    decayRates[static_cast<int>(MemoryEvent::NEST_DISCOVERY)]    = 0.05f * 0.2f;  // 0.01
+    decayRates[static_cast<int>(MemoryEvent::HOSTILE_ENCOUNTER)] = 0.05f * 0.5f;  // 0.025
+    decayRates[static_cast<int>(MemoryEvent::MATE_SIGHTING)]     = 0.05f * 1.5f;  // 0.075
+    float threshold = 0.05f;
+
+    // ---- M1: Record & query basic ----
+    {
+        data.recordMemory(bA, MemoryEvent::PREDATOR_SIGHTING, 300.0f, 400.0f, 1.0f, 10.0f);
+        CHECK(data.memCount[bA] == 1, "M1: One memory recorded");
+        float q = data.queryMemory(bA, MemoryEvent::PREDATOR_SIGHTING,
+                                   290.0f, 410.0f, 50.0f, 10.0f);
+        CHECK(q > 0.9f, "M1: Query returns high intensity near recorded position");
+        // Query far away should return 0
+        float qFar = data.queryMemory(bA, MemoryEvent::PREDATOR_SIGHTING,
+                                      900.0f, 900.0f, 50.0f, 10.0f);
+        CHECK(qFar == 0.0f, "M1: Query far away returns 0");
+        // Query wrong type should return 0
+        float qWrong = data.queryMemory(bA, MemoryEvent::FOOD_SOURCE,
+                                        300.0f, 400.0f, 50.0f, 10.0f);
+        CHECK(qWrong == 0.0f, "M1: Query wrong event type returns 0");
+    }
+
+    // ---- M2: Dedup -- same type + nearby location merges ----
+    {
+        // Clear and start fresh
+        data.memCount.assign(32, 0);
+        data.memHead.assign(32, 0);
+        data.memEventType.assign(32 * MAX_MEMORIES_PER_BOID, 0);
+        data.memPosX.assign(32 * MAX_MEMORIES_PER_BOID, 0.0f);
+        data.memPosY.assign(32 * MAX_MEMORIES_PER_BOID, 0.0f);
+        data.memIntensity.assign(32 * MAX_MEMORIES_PER_BOID, 0.0f);
+        data.memTimestamp.assign(32 * MAX_MEMORIES_PER_BOID, 0.0f);
+
+        bool r1 = data.recordMemory(bA, MemoryEvent::PREDATOR_SIGHTING,
+                                     300.0f, 400.0f, 0.8f, 10.0f);
+        CHECK(r1, "M2: First record consumes slot");
+        CHECK(data.memCount[bA] == 1, "M2: Count = 1 after first record");
+
+        // Same type, 10px away (< 50px dedup distance): should merge
+        bool r2 = data.recordMemory(bA, MemoryEvent::PREDATOR_SIGHTING,
+                                     305.0f, 402.0f, 0.6f, 11.0f);
+        CHECK(!r2, "M2: Second record deduped (did not consume slot)");
+        CHECK(data.memCount[bA] == 1, "M2: Count still 1 after dedup");
+        // Intensity averaged: (0.8 + 0.6) / 2 = 0.7
+        float q = data.queryMemory(bA, MemoryEvent::PREDATOR_SIGHTING,
+                                   300.0f, 400.0f, 10.0f, 11.0f);
+        CHECK(q > 0.69f && q < 0.71f, "M2: Merged intensity is averaged");
+
+        // Same type, far away (60px > 50px dedup distance): new slot
+        bool r3 = data.recordMemory(bA, MemoryEvent::PREDATOR_SIGHTING,
+                                     500.0f, 600.0f, 0.5f, 12.0f);
+        CHECK(r3, "M2: Far event consumes new slot");
+        CHECK(data.memCount[bA] == 2, "M2: Count = 2 for far event");
+    }
+
+    // ---- M3: Different event types do not dedup ----
+    {
+        data.memCount.assign(32, 0);
+        data.memHead.assign(32, 0);
+
+        data.recordMemory(bA, MemoryEvent::PREDATOR_SIGHTING,
+                          300.0f, 400.0f, 1.0f, 10.0f);
+        // Same position, different type: should be separate entry
+        data.recordMemory(bA, MemoryEvent::FOOD_SOURCE,
+                          302.0f, 401.0f, 0.8f, 10.0f);
+        CHECK(data.memCount[bA] == 2, "M3: Different types at same location = 2 entries");
+    }
+
+    // ---- M4: Ring buffer overflow (> 8 memories) ----
+    {
+        data.memCount.assign(32, 0);
+        data.memHead.assign(32, 0);
+
+        // Record 8 events (fill buffer)
+        for (int i = 0; i < 8; ++i) {
+            bool ok = data.recordMemory(bA, MemoryEvent::FOOD_SOURCE,
+                                         float(100 + i * 60), float(200 + i * 60),
+                                         0.5f, 10.0f + i);
+            CHECK(ok, "M4: Record fills buffer");
+        }
+        CHECK(data.memCount[bA] == 8, "M4: Buffer full at 8");
+
+        // 9th record overwrites oldest (ring buffer wraps)
+        bool r9 = data.recordMemory(bA, MemoryEvent::FOOD_SOURCE,
+                                     700.0f, 800.0f, 0.3f, 20.0f);
+        CHECK(r9, "M4: Overflow record succeeds");
+        CHECK(data.memCount[bA] == 8, "M4: Count capped at 8 after overflow");
+        // The oldest (100, 200) should be gone; query new position
+        float qOld = data.queryMemory(bA, MemoryEvent::FOOD_SOURCE,
+                                      100.0f, 200.0f, 20.0f, 20.0f);
+        CHECK(qOld == 0.0f, "M4: Oldest entry overwritten by overflow");
+        float qNew = data.queryMemory(bA, MemoryEvent::FOOD_SOURCE,
+                                      700.0f, 800.0f, 20.0f, 20.0f);
+        CHECK(qNew > 0.0f, "M4: New entry exists after overflow");
+    }
+
+    // ---- M5: hasRecentMemory ----
+    {
+        data.memCount.assign(32, 0);
+        data.memHead.assign(32, 0);
+
+        data.recordMemory(bB, MemoryEvent::NEST_DISCOVERY,
+                          600.0f, 700.0f, 0.9f, 15.0f);
+        bool fresh = data.hasRecentMemory(bB, MemoryEvent::NEST_DISCOVERY,
+                                          5.0f, 16.0f);  // 1s later
+        CHECK(fresh, "M5: Recent within 5s (age = 1s)");
+        bool stale = data.hasRecentMemory(bB, MemoryEvent::NEST_DISCOVERY,
+                                          10.0f, 100.0f);  // 85s later
+        CHECK(!stale, "M5: Not recent after 85s (maxAge = 10s)");
+        bool wrongType = data.hasRecentMemory(bB, MemoryEvent::HOSTILE_ENCOUNTER,
+                                              5.0f, 16.0f);
+        CHECK(!wrongType, "M5: Wrong event type returns false");
+    }
+
+    // ---- M6: Exponential decay (no simulation integration) ----
+    {
+        data.memCount.assign(32, 0);
+        data.memHead.assign(32, 0);
+
+        data.recordMemory(bA, MemoryEvent::PREY_SIGHTING,
+                          200.0f, 300.0f, 1.0f, 0.0f);
+        // Decay at rate 0.05 for 13.86s → exp(-0.693) ≈ 0.5 (half-life)
+        decayRates[static_cast<int>(MemoryEvent::PREY_SIGHTING)] = 0.05f;
+        data.decayMemories(1.0f, 13.86f, decayRates, 0.001f);
+        float q = data.queryMemory(bA, MemoryEvent::PREY_SIGHTING,
+                                   200.0f, 300.0f, 20.0f, 13.86f);
+        CHECK(q > 0.49f && q < 0.51f, "M6: Half-life decay ~0.5 at 13.86s");
+    }
+
+    // ---- M7: Decay below threshold removes entry ----
+    {
+        data.memCount.assign(32, 0);
+        data.memHead.assign(32, 0);
+
+        data.recordMemory(bA, MemoryEvent::MATE_SIGHTING,
+                          100.0f, 100.0f, 0.5f, 0.0f);
+        // MATE_SIGHTING rate = 0.05 * 1.5 = 0.075
+        decayRates[static_cast<int>(MemoryEvent::MATE_SIGHTING)] = 0.075f;
+        // After 50s: exp(-0.075*50) = exp(-3.75) ≈ 0.0235
+        // 0.5 * 0.0235 = 0.0118 < threshold 0.05 → removed
+        data.decayMemories(1.0f, 50.0f, decayRates, 0.05f);
+        CHECK(data.memCount[bA] == 0, "M7: Entry removed when decayed below threshold");
+    }
+
+    // ---- M8: Different decay rates per event type ----
+    {
+        data.memCount.assign(32, 0);
+        data.memHead.assign(32, 0);
+
+        // Record PREDATOR (slow decay) and MATE (fast decay) at same time
+        data.recordMemory(bA, MemoryEvent::PREDATOR_SIGHTING,
+                          300.0f, 400.0f, 1.0f, 0.0f);
+        data.recordMemory(bA, MemoryEvent::MATE_SIGHTING,
+                          100.0f, 100.0f, 1.0f, 0.0f);
+        CHECK(data.memCount[bA] == 2, "M8: Both entries recorded");
+
+        // PREDATOR rate = 0.05*0.3 = 0.015, MATE rate = 0.05*1.5 = 0.075
+        decayRates[static_cast<int>(MemoryEvent::PREDATOR_SIGHTING)] = 0.015f;
+        decayRates[static_cast<int>(MemoryEvent::MATE_SIGHTING)] = 0.075f;
+        // After 60s: PREDATOR = exp(-0.015*60) = exp(-0.9) ≈ 0.407 → 0.407 > 0.05 → kept
+        //            MATE = exp(-0.075*60) = exp(-4.5) ≈ 0.011 → 0.011 < 0.05 → removed
+        data.decayMemories(1.0f, 60.0f, decayRates, 0.05f);
+
+        float qPred = data.queryMemory(bA, MemoryEvent::PREDATOR_SIGHTING,
+                                       300.0f, 400.0f, 20.0f, 60.0f);
+        CHECK(qPred > 0.3f, "M8: Predator memory persists (slow decay)");
+
+        float qMate = data.queryMemory(bA, MemoryEvent::MATE_SIGHTING,
+                                       100.0f, 100.0f, 20.0f, 60.0f);
+        CHECK(qMate == 0.0f, "M8: Mate memory forgotten (fast decay)");
+
+        CHECK(data.memCount[bA] == 1, "M8: Only predator memory remains");
+    }
+
+    // ---- M9: queryMemory with maxDist filtering ----
+    {
+        data.memCount.assign(32, 0);
+        data.memHead.assign(32, 0);
+
+        data.recordMemory(bA, MemoryEvent::FOOD_SOURCE, 400.0f, 500.0f, 0.9f, 0.0f);
+        // Query within 10px: should find
+        float qNear = data.queryMemory(bA, MemoryEvent::FOOD_SOURCE,
+                                       402.0f, 498.0f, 10.0f, 0.0f);
+        CHECK(qNear > 0.8f, "M9: Query within maxDist returns intensity");
+        // Query beyond 100px: should not find (boid is far away)
+        float qFar = data.queryMemory(bA, MemoryEvent::FOOD_SOURCE,
+                                      600.0f, 700.0f, 10.0f, 0.0f);
+        CHECK(qFar == 0.0f, "M9: Query beyond maxDist returns 0");
+    }
+
+    // ---- M10: Default memory state on new boids ----
+    {
+        FlockData fresh;
+        fresh.reserve(4);
+        fresh.add(0.0f, 0.0f, 0.0f, 0.0f, 0, 1.0f, 1.0f, 1.0f);
+        CHECK(fresh.memCount[0] == 0, "M10: New boid has 0 memories");
+        CHECK(fresh.memHead[0] == 0, "M10: New boid memHead = 0");
+        float q = fresh.queryMemory(0, MemoryEvent::PREDATOR_SIGHTING,
+                                    0.0f, 0.0f, 10.0f, 0.0f);
+        CHECK(q == 0.0f, "M10: Query on new boid returns 0");
+        bool h = fresh.hasRecentMemory(0, MemoryEvent::FOOD_SOURCE, 999.0f, 0.0f);
+        CHECK(!h, "M10: hasRecentMemory on new boid = false");
+    }
+}
+
+// Phase 3.4: Mouse disturbance system unit tests
+void test_disturbance_system() {
+    TEST_SUITE("Phase 3.4: Disturbance system");
+
+    // ---- D1: addDisturbance creates a source ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        // No boids needed for D1; just check source creation
+        sim.addDisturbance(500.0f, 600.0f, DisturbanceType::REPEL);
+        CHECK(sim.disturbanceCount() == 1, "D1: One source created");
+        CHECK(sim.disturbances()[0].posX == 500.0f, "D1: Source posX correct");
+        CHECK(sim.disturbances()[0].posY == 600.0f, "D1: Source posY correct");
+        CHECK(sim.disturbances()[0].strength == 1.0f, "D1: Strength starts at 1.0");
+        CHECK(sim.disturbances()[0].radius == 150.0f, "D1: Default radius = 150");
+    }
+
+    // ---- D2: Disturbance source decays and is removed ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        sim.addDisturbance(300.0f, 400.0f, DisturbanceType::REPEL);
+        // decayRate = 0.33/s, full decay in ~3s
+        sim.update(0.5f);  // 0.5s → strength ≈ 1.0 - 0.33*0.5 = 0.835
+        CHECK(sim.disturbanceCount() == 1, "D2: Source still present after 0.5s");
+        CHECK(sim.disturbances()[0].strength < 0.85f,
+              "D2: Strength decayed after 0.5s");
+        sim.update(3.5f);  // 4.0s total → fully expired
+        CHECK(sim.disturbanceCount() == 0, "D2: Source removed after full decay");
+    }
+
+    // ---- D3: REPEL pushes boids away ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        sim.flockParams(0).boundary.wanderWeight = 0.0f;  // Disable wander for deterministic test
+        sim.flockParams(0).sanity.panickedWanderMult = 0.0f;
+        sim.flockParams(0).sanity.uneasyWanderMult = 0.0f;
+        // Add 1 boid near disturbance point
+        sim.data().count = 0;
+        sim.data().posX[0] = 510.0f;
+        sim.data().posY[0] = 500.0f;
+        sim.data().velX[0] = 0.0f;
+        sim.data().velY[0] = 0.0f;
+        sim.data().flockId[0] = 0;
+        sim.data().hunger[0] = 0.5f;
+        sim.data().health[0] = 1.0f;
+        sim.data().fatigue[0] = 0.0f;
+        sim.data().sex[0] = 0;
+        sim.data().age[0] = 100.0f;
+        sim.data().ageStage[0] = static_cast<uint8_t>(AgeStage::Adult);
+        sim.data().lastCombatTime[0] = -1e9f;
+        sim.data().lastKillTime[0] = -1e9f;
+        sim.data().hatredTarget[0] = 255;
+        sim.data().hatredLevel[0] = 0.0f;
+        sim.data().weight[0] = 1.0f;
+        sim.data().state[0] = static_cast<uint8_t>(BoidState::IDLE);
+        sim.data().killStreak[0] = 0;
+        sim.data().count = 1;
+
+        sim.addDisturbance(500.0f, 500.0f, DisturbanceType::REPEL);
+        float beforeX = sim.data().posX[0];
+        float beforeY = sim.data().posY[0];
+        sim.update(0.016f);
+        // Boid at (510, 500), source at (500, 500) → push right (+x direction)
+        CHECK(sim.data().posX[0] > beforeX, "D3: REPEL pushes boid away from source");
+    }
+
+    // ---- D4: ATTRACT pulls boids toward source ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        sim.flockParams(0).boundary.wanderWeight = 0.0f;  // Disable wander for deterministic test
+        sim.flockParams(0).sanity.panickedWanderMult = 0.0f;
+        sim.flockParams(0).sanity.uneasyWanderMult = 0.0f;
+        sim.data().count = 0;
+        sim.data().posX[0] = 600.0f;
+        sim.data().posY[0] = 500.0f;
+        sim.data().velX[0] = 0.0f;
+        sim.data().velY[0] = 0.0f;
+        sim.data().flockId[0] = 0;
+        sim.data().hunger[0] = 0.5f;
+        sim.data().health[0] = 1.0f;
+        sim.data().fatigue[0] = 0.0f;
+        sim.data().sex[0] = 0;
+        sim.data().age[0] = 100.0f;
+        sim.data().ageStage[0] = static_cast<uint8_t>(AgeStage::Adult);
+        sim.data().lastCombatTime[0] = -1e9f;
+        sim.data().lastKillTime[0] = -1e9f;
+        sim.data().hatredTarget[0] = 255;
+        sim.data().hatredLevel[0] = 0.0f;
+        sim.data().weight[0] = 1.0f;
+        sim.data().state[0] = static_cast<uint8_t>(BoidState::IDLE);
+        sim.data().killStreak[0] = 0;
+        sim.data().count = 1;
+
+        sim.addDisturbance(500.0f, 500.0f, DisturbanceType::ATTRACT);
+        float beforeX = sim.data().posX[0];
+        sim.update(0.016f);
+        // Boid at (600, 500), source at (500, 500) → pull left (−x direction)
+        CHECK(sim.data().posX[0] < beforeX, "D4: ATTRACT pulls boid toward source");
+    }
+
+    // ---- D5: Cap at 32 disturbance sources ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        for (int i = 0; i < 40; ++i) {
+            sim.addDisturbance(100.0f + i, 200.0f, DisturbanceType::REPEL);
+        }
+        CHECK(sim.disturbanceCount() == 32, "D5: Disturbance sources capped at 32");
+    }
+
+    // ---- D6: Boid outside radius is unaffected ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        // Freeze wander to prevent tiny movements from random forces
+        sim.flockParams(0).boundary.wanderWeight = 0.0f;
+        sim.data().count = 0;
+        sim.data().posX[0] = 1500.0f;  // Far from source at (500, 500)
+        sim.data().posY[0] = 1500.0f;
+        sim.data().velX[0] = 0.0f;
+        sim.data().velY[0] = 0.0f;
+        sim.data().flockId[0] = 0;
+        sim.data().hunger[0] = 0.5f;
+        sim.data().health[0] = 1.0f;
+        sim.data().fatigue[0] = 0.0f;
+        sim.data().sex[0] = 0;
+        sim.data().age[0] = 100.0f;
+        sim.data().ageStage[0] = static_cast<uint8_t>(AgeStage::Adult);
+        sim.data().lastCombatTime[0] = -1e9f;
+        sim.data().lastKillTime[0] = -1e9f;
+        sim.data().hatredTarget[0] = 255;
+        sim.data().hatredLevel[0] = 0.0f;
+        sim.data().weight[0] = 1.0f;
+        sim.data().state[0] = static_cast<uint8_t>(BoidState::IDLE);
+        sim.data().killStreak[0] = 0;
+        sim.data().count = 1;
+
+        sim.addDisturbance(500.0f, 500.0f, DisturbanceType::REPEL);
+        float beforeX = sim.data().posX[0];
+        float beforeY = sim.data().posY[0];
+        sim.update(0.016f);
+        float dx = sim.data().posX[0] - beforeX;
+        float dy = sim.data().posY[0] - beforeY;
+        CHECK(dx < 0.01f, "D6: Boid outside radius unmoved X");
+        CHECK(dy < 0.01f, "D6: Boid outside radius unmoved Y");
+    }
+}
+
+// Phase 3.5: Sanity system unit tests
+void test_sanity_system() {
+    TEST_SUITE("Phase 3.5: Sanity system");
+
+    // ---- S1: New boid starts with full sanity ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        sim.data().count = 0;
+        sim.data().posX[0] = 500.0f;
+        sim.data().posY[0] = 500.0f;
+        sim.data().velX[0] = 0.0f;
+        sim.data().velY[0] = 0.0f;
+        sim.data().flockId[0] = 0;
+        sim.data().hunger[0] = 1.0f;
+        sim.data().health[0] = 1.0f;
+        sim.data().fatigue[0] = 0.0f;
+        sim.data().sex[0] = 0;
+        sim.data().age[0] = 100.0f;
+        sim.data().ageStage[0] = static_cast<uint8_t>(AgeStage::Adult);
+        sim.data().lastCombatTime[0] = -1e9f;
+        sim.data().lastKillTime[0] = -1e9f;
+        sim.data().hatredTarget[0] = 255;
+        sim.data().hatredLevel[0] = 0.0f;
+        sim.data().weight[0] = 1.0f;
+        sim.data().state[0] = static_cast<uint8_t>(BoidState::IDLE);
+        sim.data().killStreak[0] = 0;
+        sim.data().sanityLevel[0] = 1.0f;  // Explicit init (reserve only)
+        sim.data().count = 1;
+
+        CHECK(sim.data().sanityLevel[0] == 1.0f,
+              "S1: New boid starts at full sanity");
+    }
+
+    // ---- S2: Sanity decays with hunger ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        sim.data().count = 0;
+        sim.data().posX[0] = 500.0f;
+        sim.data().posY[0] = 500.0f;
+        sim.data().velX[0] = 0.0f;
+        sim.data().velY[0] = 0.0f;
+        sim.data().flockId[0] = 0;
+        sim.data().hunger[0] = 0.2f;  // Below trigger 0.4
+        sim.data().health[0] = 1.0f;
+        sim.data().fatigue[0] = 0.0f;
+        sim.data().sex[0] = 0;
+        sim.data().age[0] = 100.0f;
+        sim.data().ageStage[0] = static_cast<uint8_t>(AgeStage::Adult);
+        sim.data().lastCombatTime[0] = -1e9f;
+        sim.data().lastKillTime[0] = -1e9f;
+        sim.data().hatredTarget[0] = 255;
+        sim.data().hatredLevel[0] = 0.0f;
+        sim.data().weight[0] = 1.0f;
+        sim.data().state[0] = static_cast<uint8_t>(BoidState::IDLE);
+        sim.data().killStreak[0] = 0;
+        sim.data().sanityLevel[0] = 1.0f;  // Explicit init
+        sim.data().count = 1;
+
+        // Boost decay rate to make change detectable
+        sim.flockParams(0).sanity.sanityDecayRate = 2.0f;
+        sim.flockParams(0).sanity.sanityRecoveryRate = 0.0f;
+        CHECK(sim.data().sanityLevel[0] == 1.0f,
+              "S2: Pre-update sanity is 1.0");
+        sim.update(0.5f);
+        CHECK(sim.data().sanityLevel[0] < 0.8f,
+              "S2: Sanity decays with hunger + no recovery");
+    }
+
+    // ---- S3: Sanity recovers when IDLE + no threats ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        sim.data().count = 0;
+        sim.data().posX[0] = 500.0f;
+        sim.data().posY[0] = 500.0f;
+        sim.data().velX[0] = 0.0f;
+        sim.data().velY[0] = 0.0f;
+        sim.data().flockId[0] = 0;
+        sim.data().hunger[0] = 1.0f;  // Full hunger, no decay
+        sim.data().health[0] = 1.0f;
+        sim.data().fatigue[0] = 0.0f;  // No fatigue
+        sim.data().sex[0] = 0;
+        sim.data().age[0] = 100.0f;
+        sim.data().ageStage[0] = static_cast<uint8_t>(AgeStage::Adult);
+        sim.data().lastCombatTime[0] = -1e9f;
+        sim.data().lastKillTime[0] = -1e9f;
+        sim.data().hatredTarget[0] = 255;
+        sim.data().hatredLevel[0] = 0.0f;
+        sim.data().weight[0] = 1.0f;
+        sim.data().state[0] = static_cast<uint8_t>(BoidState::IDLE);
+        sim.data().killStreak[0] = 0;
+        sim.data().sanityLevel[0] = 0.5f;  // Start low
+        sim.data().count = 1;
+
+        sim.update(2.0f);
+        CHECK(sim.data().sanityLevel[0] > 0.55f,
+              "S3: Sanity recovers over time when IDLE + no threats");
+    }
+
+    // ---- S4: Clamped to [0, 1] ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        sim.data().count = 0;
+        sim.data().posX[0] = 500.0f;
+        sim.data().posY[0] = 500.0f;
+        sim.data().velX[0] = 0.0f;
+        sim.data().velY[0] = 0.0f;
+        sim.data().flockId[0] = 0;
+        sim.data().hunger[0] = 0.0f;  // Max hunger decay
+        sim.data().health[0] = 1.0f;
+        sim.data().fatigue[0] = 0.0f;
+        sim.data().sex[0] = 0;
+        sim.data().age[0] = 100.0f;
+        sim.data().ageStage[0] = static_cast<uint8_t>(AgeStage::Adult);
+        sim.data().lastCombatTime[0] = -1e9f;
+        sim.data().lastKillTime[0] = -1e9f;
+        sim.data().hatredTarget[0] = 255;
+        sim.data().hatredLevel[0] = 0.0f;
+        sim.data().weight[0] = 1.0f;
+        sim.data().state[0] = static_cast<uint8_t>(BoidState::IDLE);
+        sim.data().killStreak[0] = 0;
+        sim.data().sanityLevel[0] = 0.0f;
+        sim.data().count = 1;
+
+        // Force max decay
+        sim.flockParams(0).sanity.sanityDecayRate = 10.0f;
+        sim.flockParams(0).sanity.sanityRecoveryRate = 0.0f;
+        sim.update(1.0f);
+        CHECK(sim.data().sanityLevel[0] >= 0.0f, "S4: Sanity clamped >= 0.0");
+    }
+
+    // ---- S5: Panicked threshold modifies wander + cohesion ----
+    {
+        // S5a: Panicked wander multiplier amplifies movement
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        sim.flockParams(0).boundary.wanderWeight = 20.0f;
+        sim.flockParams(0).sanity.panickedWanderMult = 3.0f;
+        sim.data().count = 0;
+        sim.data().posX[0] = 500.0f;
+        sim.data().posY[0] = 500.0f;
+        sim.data().velX[0] = 0.0f;
+        sim.data().velY[0] = 0.0f;
+        sim.data().flockId[0] = 0;
+        sim.data().hunger[0] = 0.5f;
+        sim.data().health[0] = 1.0f;
+        sim.data().fatigue[0] = 0.0f;
+        sim.data().sex[0] = 0;
+        sim.data().age[0] = 100.0f;
+        sim.data().ageStage[0] = static_cast<uint8_t>(AgeStage::Adult);
+        sim.data().lastCombatTime[0] = -1e9f;
+        sim.data().lastKillTime[0] = -1e9f;
+        sim.data().hatredTarget[0] = 255;
+        sim.data().hatredLevel[0] = 0.0f;
+        sim.data().weight[0] = 1.0f;
+        sim.data().state[0] = static_cast<uint8_t>(BoidState::IDLE);
+        sim.data().killStreak[0] = 0;
+        sim.data().sanityLevel[0] = 0.2f;  // Below panicked 0.3
+        sim.data().count = 1;
+
+        float beforeX = sim.data().posX[0];
+        sim.update(0.016f);
+        float dxPanic = std::abs(sim.data().posX[0] - beforeX);
+        CHECK(dxPanic > 0.0f, "S5a: Panicked boid wander moves boid");
+
+        // S5b: Cohesion is fully disabled when panicked
+        CHECK(sim.flockParams(0).sanity.panickedCohesionMult == 0.0f,
+              "S5b: Panicked cohesion multiplier = 0.0 (disabled)");
+        CHECK(sim.flockParams(0).sanity.uneasyCohesionMult == 0.5f,
+              "S5b: Uneasy cohesion multiplier = 0.5 (halved)");
+    }
+
+    // ---- S6: Configurable thresholds ----
+    {
+        Simulation sim;
+        sim.init(1920.0f, 1080.0f, 100);
+        CHECK(sim.flockParams(0).sanity.uneasyThreshold == 0.7f,
+              "S6: Uneasy threshold defaults to 0.7");
+        CHECK(sim.flockParams(0).sanity.panickedThreshold == 0.3f,
+              "S6: Panicked threshold defaults to 0.3");
+        CHECK(sim.flockParams(0).sanity.nestRecoveryBoost == 3.0f,
+              "S6: Nest recovery boost defaults to 3.0x");
+    }
+}
+
 void test_rapid_api_abuse() {
     TEST_SUITE("Rapid API abuse: overflow storm");
 
@@ -1519,6 +2080,9 @@ int main()
     test_nest_system();
     test_nest_contest();
     test_day_night_cycle();
+    test_memory_system();
+    test_disturbance_system();
+    test_sanity_system();
     test_rapid_api_abuse();
 
     std::cout << "\n=============================================" << std::endl;

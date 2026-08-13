@@ -315,7 +315,7 @@ void Renderer::init()
     const int INSTANCE_STRIDE = 10;
     glGenBuffers(1, &m_instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, m_instanceVBO);
-    glBufferData(GL_ARRAY_BUFFER, 10000 * INSTANCE_STRIDE * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, 20000 * INSTANCE_STRIDE * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
 
     // Instance attribute: aOffset (location 1) = (posX, posY)
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, INSTANCE_STRIDE * sizeof(float), (void*)0);
@@ -354,7 +354,7 @@ void Renderer::init()
 
     glBindVertexArray(0);
 
-    m_instanceData.reserve(10000 * INSTANCE_STRIDE);
+    m_instanceData.reserve(20000 * INSTANCE_STRIDE);
 
     // Create a minimal 1-layer sprite texture array (layer 0 = white, for "no sprite" fallback)
     createSpriteArray(1);

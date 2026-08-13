@@ -110,7 +110,7 @@ struct InterFlockSuf {
 struct ReproductionSuf {
     float reproductionMinOffspring = 1.0f;
     float reproductionMaxOffspring = 5.0f;
-    int   maxFlockSize = 2000;
+    int   maxFlockSize = 5000;
     float reproductionMinHunger = 0.60f;
     float reproductionInterval = 60.0f;
     float adultAge = 240.0f;

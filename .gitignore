@@ -22,3 +22,6 @@ Desktop.ini
 *.tmp
 *.swp
 *~
+
+# Param tuner backups
+*.bak

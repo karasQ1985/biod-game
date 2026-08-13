@@ -111,7 +111,7 @@ PARAMS: List[ParamDef] = [
         "全局滑块改变时此函数会将所有群体的 maxFlockSize 同步为此值，但当前硬编码钳制为旧默认值，是一处设计缺陷。",
         "src/simulation/Simulation.cpp",
         "if (cap > 2000) cap = 2000;",
-        r"if\s*\(cap\s*>\s*(\d+)\)\s*cap\s*=\s*\d+\s*;",
+        r"if\s*\(cap\s*>\s*(\d+)\)\s*cap\s*=\s*(\d+)\s*;",
         "    if (cap > {value}) cap = {value};\n",
         default=2000, min_val=50, max_val=50000, step=100,
         sync_group="per_flock"
@@ -172,19 +172,6 @@ PARAMS: List[ParamDef] = [
         r"float\s+initialPlants\s*=\s*([\d.]+)f\s*;",
         "    float initialPlants = {value}.0f;\n",
         default=80, min_val=0, max_val=50000, step=10,
-    ),
-
-    # ── 性能参数 ──
-    ParamDef(
-        "renderer_plant_draw_cap", "渲染性能",
-        "植物实例渲染上限",
-        "Renderer 中植物实例缓冲区的最大容量。与 GPU VBO 共用同一缓冲区，过高可能导致实例数据溢出。",
-        "src/renderer/Renderer.cpp",
-        "glBufferData(GL_ARRAY_BUFFER, 10000 * INSTANCE_STRIDE * sizeof(float)",
-        r"glBufferData\(GL_ARRAY_BUFFER,\s*(\d+)\s*\*\s*INSTANCE_STRIDE\s*\*\s*sizeof\(float\)",
-        "    glBufferData(GL_ARRAY_BUFFER, {value} * INSTANCE_STRIDE * sizeof(float), nullptr, GL_DYNAMIC_DRAW);\n",
-        default=10000, min_val=100, max_val=100000, step=100,
-        sync_group="global_cap"
     ),
 ]
 
@@ -249,8 +236,9 @@ def get_current_value(param: ParamDef) -> int | None:
 def apply_param(param: ParamDef, new_value: int) -> bool:
     """将单个参数的新值写回源文件。
 
-    使用 extract_re 正则定位目标行，通过 group(1) 的起止位置
-    精确替换数值，保留行内所有其他内容不变。"""
+    使用 extract_re 正则定位目标行，通过每个捕获组的起止位置
+    精确替换数值，保留行内所有其他内容不变。
+    支持多捕获组（如 if (cap > X) cap = Y; 两处数值需同步替换）。"""
     try:
         content = _read_file(param.file_path)
     except FileNotFoundError:
@@ -260,22 +248,26 @@ def apply_param(param: ParamDef, new_value: int) -> bool:
     if not match or match.lastindex is None or match.lastindex < 1:
         return False
 
-    # 在完整匹配文本中定位 group(1) 的偏移
-    old_val = match.group(1)
     matched_text = match.group(0)
-    g1_start = match.start(1) - match.start(0)
-    g1_end = match.end(1) - match.start(0)
+    new_text = matched_text
 
-    # 如果原始值是 float 格式（含小数点或后缀 f），保持 .0f 格式
-    is_float = ("." in old_val) or old_val.endswith("f")
-    if is_float:
-        formatted = f"{new_value}.0f"
-        # 如果 group(1) 没捕获到 f，那么 matched_text[g1_end] 就是 f，跳过它
-        if not old_val.endswith("f") and g1_end < len(matched_text) and matched_text[g1_end] == "f":
-            g1_end += 1
-    else:
-        formatted = str(new_value)
-    new_text = matched_text[:g1_start] + formatted + matched_text[g1_end:]
+    # 从右到左替换所有捕获组，避免前序替换影响后续偏移
+    for gi in range(match.lastindex, 0, -1):
+        old_val = match.group(gi)
+        g_start = match.start(gi) - match.start(0)
+        g_end   = match.end(gi)   - match.start(0)
+
+        # 如果原始值是 float 格式（含小数点或后缀 f），保持 .0f 格式
+        is_float = ("." in old_val) or old_val.endswith("f")
+        if is_float:
+            formatted = f"{new_value}.0f"
+            # 如果 group 没捕获到 f，那么后面紧跟的就是 f，跳过它
+            if not old_val.endswith("f") and g_end < len(new_text) and new_text[g_end] == "f":
+                g_end += 1
+        else:
+            formatted = str(new_value)
+
+        new_text = new_text[:g_start] + formatted + new_text[g_end:]
 
     # 用 re.sub 仅替换第一次出现
     escaped = re.escape(matched_text)
@@ -587,18 +579,52 @@ class ParamTunerApp:
     # ── 编译与运行 ──
 
     def _find_build_tools(self) -> dict:
-        """自动定位构建工具链（cmake, ninja, mingw, qt）"""
-        tools_dir = os.path.join(PROJECT_ROOT, "..", "tools", "Qt")
-        cmake_exe = os.path.join(tools_dir, "Tools", "CMake_64", "bin", "cmake.exe")
-        ninja_exe = os.path.join(tools_dir, "Tools", "Ninja", "ninja.exe")
-        gxx_exe = os.path.join(tools_dir, "Tools", "mingw1310_64", "bin", "g++.exe")
-        qt_dir = os.path.join(tools_dir, "6.5.3", "mingw_64")
+        """Auto-detect build toolchain (cmake, ninja, mingw, qt).
+        Priority: QT_DIR env -> C:/Qt -> D:/Qt -> cmake from PATH fallback."""
+        import glob as _glob
+
+        def _first_exists(*candidates: str) -> str:
+            for c in candidates:
+                if os.path.exists(c):
+                    return c
+            return candidates[0]  # return first so error message is clear
+
+        # Locate Qt root directory
+        qt_root = ""
+        for base in [os.environ.get("QT_DIR", ""), "C:/Qt", "D:/Qt", "E:/Qt"]:
+            if base and os.path.isdir(base):
+                qt_root = base
+                break
+
+        # Auto-detect Qt version directory (e.g. 6.11.1/mingw_64)
+        qt_dir = ""
+        if qt_root:
+            versions = sorted(
+                [d for d in os.listdir(qt_root) if os.path.isdir(os.path.join(qt_root, d)) and d[0].isdigit()],
+                reverse=True
+            )
+            for ver in versions:
+                candidate = os.path.join(qt_root, ver, "mingw_64")
+                if os.path.isdir(candidate):
+                    qt_dir = candidate
+                    break
+
+        # Tools directory (cmake / ninja / mingw)
+        tools_base = os.path.join(qt_root, "Tools") if qt_root else ""
+
+        cmake_exe  = _first_exists(
+            os.path.join(tools_base, "CMake_64", "bin", "cmake.exe"),
+            "cmake",  # fallback: hope it is on PATH
+        )
+        ninja_exe  = os.path.join(tools_base, "Ninja", "ninja.exe") if tools_base else "ninja"
+        gxx_exe    = os.path.join(tools_base, "mingw1310_64", "bin", "g++.exe") if tools_base else "g++"
+
         return {
             "cmake": cmake_exe,
             "ninja": ninja_exe,
             "gxx": gxx_exe,
             "qt_dir": qt_dir,
-            "tools_dir": os.path.join(tools_dir, "Tools"),
+            "tools_dir": tools_base,
         }
 
     def _show_build_panel(self):

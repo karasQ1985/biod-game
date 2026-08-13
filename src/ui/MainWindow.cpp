@@ -395,7 +395,7 @@ void MainWindow::setupUI()
     reg.reg({"\u5de2\u7a74\u9009\u5740\u8303\u56f4 (Selection Range)",  "nestPref", HO_N(nestPref, nestSelectionRange),    50, 500, ScaleMode::OneToOne, static_cast<int>(p.nestPref.nestSelectionRange),           BASE_FLOCK, "px"});
 
     // Plant params
-    reg.reg({"\u6700\u5927\u6570\u91cf (Max Plants)",          "plants", PO(maxPlants),       10,  500, ScaleMode::OneToOne,  static_cast<int>(pp.maxPlants),  BASE_PLANT});
+    reg.reg({"\u6700\u5927\u6570\u91cf (Max Plants)",          "plants", PO(maxPlants),       10,  2271, ScaleMode::OneToOne,  static_cast<int>(pp.maxPlants),  BASE_PLANT});
     reg.reg({"\u8fdb\u98df\u8303\u56f4 (Eat Range)",           "plants", PO(eatRange),        5,   100, ScaleMode::OneToOne,  static_cast<int>(pp.eatRange),      BASE_PLANT, "px"});
     reg.reg({"\u690d\u7269\u98df\u7269\u503c (Food Value)",     "plants", PO(plantFoodValue),  10,  100, ScaleMode::Div100,  static_cast<int>(pp.plantFoodValue * 100), BASE_PLANT, "%"});
     reg.reg({"\u751f\u957f\u65f6\u95f4 (Growth Time)",         "plants", PO(growthTime),      10,  200, ScaleMode::OneToOne,  static_cast<int>(pp.growthTime),    BASE_PLANT, "s"});
@@ -756,7 +756,7 @@ void MainWindow::setupUI()
 
         auto* capRow = new QHBoxLayout();
         m_globalCapSlider = new QSlider(Qt::Horizontal);
-        m_globalCapSlider->setRange(100, 10000);
+        m_globalCapSlider->setRange(100, 20000);
         m_globalCapSlider->setValue(sim.maxBoids());
         m_globalCapSlider->setStyleSheet("QSlider::groove:horizontal { height: 4px; background: #555; border-radius: 2px; }"
             "QSlider::handle:horizontal { width: 10px; height: 14px; background: #888; border-radius: 3px; margin: -5px 0; }");
